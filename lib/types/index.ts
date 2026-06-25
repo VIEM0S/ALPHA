@@ -1,0 +1,380 @@
+export interface User {
+  id: string;
+  tenantId: string | null;
+  email: string;
+  firstName: string;
+  lastName: string;
+  phone: string | null;
+  avatar: string | null;
+  role: UserRole;
+  isActive: boolean;
+  emailVerified: boolean;
+  mfaEnabled: boolean;
+  lastLoginAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type UserRole = 'SUPER_ADMIN' | 'OWNER' | 'MANAGER' | 'CASHIER';
+
+export interface Tenant {
+  id: string;
+  name: string;
+  slug: string;
+  logo: string | null;
+  email: string;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  country: string;
+  rccm: string | null;
+  nif: string | null;
+  currency: string;
+  timezone: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  subscription?: Subscription;
+}
+
+export interface Subscription {
+  id: string;
+  tenantId: string;
+  plan: SubscriptionPlan;
+  status: SubscriptionStatus;
+  trialEndsAt: Date | null;
+  currentPeriodStart: Date | null;
+  currentPeriodEnd: Date | null;
+  limits?: SubscriptionLimits;
+}
+
+export type SubscriptionPlan = 'STARTER' | 'BUSINESS' | 'ENTERPRISE';
+export type SubscriptionStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED' | 'EXPIRED';
+
+export interface SubscriptionLimits {
+  maxUsers: number;
+  maxStores: number;
+  maxProducts: number;
+  maxCustomers: number;
+  posEnabled: boolean;
+  analyticsEnabled: boolean;
+  multiStoreEnabled: boolean;
+  apiAccessEnabled: boolean;
+}
+
+export interface Store {
+  id: string;
+  tenantId: string;
+  name: string;
+  code: string;
+  address: string | null;
+  city: string | null;
+  phone: string | null;
+  email: string | null;
+  isWarehouse: boolean;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Category {
+  id: string;
+  tenantId: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  parentId: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Product {
+  id: string;
+  tenantId: string;
+  sku: string;
+  barcode: string | null;
+  name: string;
+  description: string | null;
+  categoryId: string | null;
+  category?: Category;
+  unit: string;
+  purchasePrice: number;
+  sellingPrice: number;
+  taxRate: number;
+  alertThreshold: number;
+  imageData: string | null;
+  isActive: boolean;
+  trackInventory: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  inventory?: Inventory[];
+}
+
+export interface Inventory {
+  id: string;
+  tenantId: string;
+  productId: string;
+  storeId: string;
+  quantity: number;
+  minQuantity?: number;
+  maxQuantity?: number | null;
+  reorderPoint?: number | null;
+  lastStockCheck?: Date | null;
+}
+
+export interface Customer {
+  id: string;
+  tenantId: string;
+  code: string;
+  firstName: string | null;
+  lastName: string | null;
+  companyName: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  customerType: CustomerType;
+  creditLimit: number;
+  creditUsed: number;
+  notes: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type CustomerType = 'INDIVIDUAL' | 'BUSINESS' | 'WALK_IN';
+
+export interface Sale {
+  id: string;
+  tenantId: string;
+  reference: string;
+  customerId: string | null;
+  customer?: Customer;
+  storeIdFrom: string;
+  storeFrom?: Store;
+  cashierId: string;
+  cashier?: User;
+  status: SaleStatus;
+  subtotal: number;
+  taxAmount: number;
+  discountAmount: number;
+  discountReason: string | null;
+  total: number;
+  paidAmount: number;
+  changeGiven: number;
+  paymentMethod: PaymentMethod;
+  notes: string | null;
+  items: SaleItem[];
+  payments: Payment[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type SaleStatus = 'DRAFT' | 'PENDING' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED' | 'PARTIALLY_REFUNDED';
+export type PaymentMethod = 'CASH' | 'MOBILE_MONEY' | 'BANK_TRANSFER' | 'CREDIT' | 'CARD' | 'SPLIT';
+
+export interface SaleItem {
+  id: string;
+  saleId: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  quantity: number;
+  unitPrice: number;
+  purchasePrice: number;
+  discountPercent: number;
+  taxRate: number;
+  total: number;
+  returnedQuantity: number;
+}
+
+export interface Payment {
+  id: string;
+  saleId: string;
+  method: PaymentMethod;
+  amount: number;
+  reference: string | null;
+  mobileProvider: string | null;
+}
+
+export interface Credit {
+  id: string;
+  tenantId: string;
+  customerId: string;
+  customer?: Customer;
+  saleId: string | null;
+  reference: string;
+  totalAmount: number;
+  paidAmount: number;
+  remainingAmount: number;
+  dueDate: Date;
+  status: CreditStatus;
+  penaltyRate: number;
+  penaltyAmount: number;
+  notes: string | null;
+  payments: CreditPayment[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type CreditStatus = 'PENDING' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE' | 'CANCELLED' | 'WRITTEN_OFF';
+
+export interface CreditPayment {
+  id: string;
+  creditId: string;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  reference: string | null;
+  notes: string | null;
+  createdAt: Date;
+}
+
+export interface Quote {
+  id: string;
+  tenantId: string;
+  reference: string;
+  customerId: string | null;
+  customer?: Customer;
+  status: QuoteStatus;
+  validUntil: Date | null;
+  subtotal: number;
+  taxAmount: number;
+  discountAmount: number;
+  total: number;
+  notes: string | null;
+  terms: string | null;
+  items: QuoteItem[];
+  convertedSaleId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type QuoteStatus = 'DRAFT' | 'PENDING' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CONVERTED';
+
+export interface QuoteItem {
+  id: string;
+  quoteId: string;
+  productId: string | null;
+  productName: string;
+  productSku: string | null;
+  quantity: number;
+  unitPrice: number;
+  discountPercent: number;
+  taxRate: number;
+  total: number;
+}
+
+export interface Supplier {
+  id: string;
+  tenantId: string;
+  code: string;
+  name: string;
+  contactPerson: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  paymentTerms: number | null;
+  taxId: string | null;
+  notes: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Alert {
+  id: string;
+  tenantId: string;
+  type: AlertType;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  reference: string | null;
+  referenceId: string | null;
+  isRead: boolean;
+  isResolved: boolean;
+  resolvedBy: string | null;
+  resolvedAt: Date | null;
+  createdAt: Date;
+}
+
+export type AlertType = 'LOW_STOCK' | 'OUT_OF_STOCK' | 'OVERDUE_CREDIT' | 'LARGE_DISCOUNT' | 'REFUND' | 'CASH_VARIANCE' | 'FAILED_PAYMENT' | 'SUSPICIOUS_ACTIVITY';
+export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export interface Notification {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  type: string;
+  reference: string | null;
+  referenceId: string | null;
+  channel: NotificationChannel;
+  isRead: boolean;
+  readAt: Date | null;
+  createdAt: Date;
+}
+
+export type NotificationChannel = 'IN_APP' | 'EMAIL' | 'SMS' | 'WHATSAPP' | 'PUSH';
+
+export interface DashboardStats {
+  todaySales: number;
+  weeklyRevenue: number;
+  monthlyRevenue: number;
+  grossProfit: number;
+  netProfit: number;
+  stockValuation: number;
+  overdueCredits: number;
+  lowStockCount: number;
+  topProducts: TopProduct[];
+  recentSales: Sale[];
+  salesTrend: SalesTrendPoint[];
+}
+
+export interface TopProduct {
+  id: string;
+  name: string;
+  sku: string;
+  quantitySold: number;
+  revenue: number;
+}
+
+export interface SalesTrendPoint {
+  date: string;
+  sales: number;
+  revenue: number;
+}
+
+export interface CashRegisterSession {
+  id: string;
+  registerId: string;
+  openedBy: string;
+  openedByUser?: User;
+  openedAt: Date;
+  closedAt: Date | null;
+  closedBy: string | null;
+  openingBalance: number;
+  expectedBalance: number;
+  actualBalance: number | null;
+  variance: number | null;
+  varianceReason: string | null;
+}
+
+export interface CartItem {
+  product: Product;
+  quantity: number;
+  unitPrice: number;
+  discount: number;
+  tax: number;
+  total: number;
+}
+
+export interface Cart {
+  items: CartItem[];
+  customerId: string | null;
+  discountPercent: number;
+  discountReason: string | null;
+  notes: string | null;
+}
