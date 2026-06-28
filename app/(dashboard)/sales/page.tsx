@@ -1,0 +1,375 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import {
+  Search, Eye, X, ShoppingBag, RefreshCw,
+  XCircle, CheckCircle2, ChevronRight, Banknote,
+  Smartphone, CreditCard, Users, Calendar
+} from 'lucide-react';
+import { DashboardLayout } from '@/components/layout';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { formatCurrency, formatDateTime } from '@/lib/utils/helpers';
+import { useAuthStore } from '@/hooks/store';
+import {
+  collection, query, orderBy, onSnapshot, limit,
+  doc, updateDoc, addDoc, serverTimestamp, getDocs, where
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase/client';
+import { tenantCol } from '@/lib/firebase/collections';
+
+interface SaleItem {
+  productId: string; productName: string; productSku: string;
+  quantity: number; unitPrice: number; total: number; costPrice?: number;
+}
+interface Sale {
+  id: string; total: number; status: string; paymentMethod?: string;
+  customerName?: string; customerId?: string; createdAt: unknown;
+  discountPercent?: number; discountAmount?: number; tax?: number;
+  itemCount?: number; motifAnnulation?: string;
+}
+
+const PM_LABELS: Record<string, { label: string; icon: typeof Banknote }> = {
+  CASH:         { label: 'Espèces',      icon: Banknote },
+  MOBILE_MONEY: { label: 'Mobile Money', icon: Smartphone },
+  CARD:         { label: 'Carte',        icon: CreditCard },
+  CREDIT:       { label: 'Crédit',       icon: Users },
+};
+
+export default function SalesPage() {
+  const { tenant, user } = useAuthStore();
+  const tenantId = tenant?.id;
+
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+
+  const [selected, setSelected] = useState<Sale | null>(null);
+  const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
+  const [loadingItems, setLoadingItems] = useState(false);
+
+  const [cancelTarget, setCancelTarget] = useState<Sale | null>(null);
+  const [cancelMotif, setCancelMotif] = useState('');
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    const q = query(collection(db, tenantCol(tenantId, 'sales')), orderBy('createdAt', 'desc'), limit(300));
+    return onSnapshot(q, snap => {
+      setSales(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Sale[]);
+      setIsLoading(false);
+    });
+  }, [tenantId]);
+
+  // Charger les articles de la vente sélectionnée
+  useEffect(() => {
+    if (!tenantId || !selected) { setSaleItems([]); return; }
+    setLoadingItems(true);
+    getDocs(collection(db, `tenants/${tenantId}/sales/${selected.id}/sale_items`))
+      .then(snap => setSaleItems(snap.docs.map(d => ({ id: d.id, ...d.data() })) as SaleItem[]))
+      .finally(() => setLoadingItems(false));
+  }, [tenantId, selected?.id]);
+
+  const toTimestamp = (v: unknown): string => {
+    if (!v) return '';
+    if (typeof v === 'object' && v !== null && 'seconds' in v) return new Date((v as { seconds: number }).seconds * 1000).toISOString();
+    if (typeof v === 'object' && v !== null && 'toDate' in v) return (v as { toDate: () => Date }).toDate().toISOString();
+    return String(v);
+  };
+
+  const filtered = sales.filter(s => {
+    const matchSearch = !search || s.id.toLowerCase().includes(search.toLowerCase()) || (s.customerName || '').toLowerCase().includes(search.toLowerCase());
+    const matchStatus = filterStatus === 'all' || s.status === filterStatus;
+    const ts = toTimestamp(s.createdAt);
+    const matchFrom = !filterDateFrom || ts >= filterDateFrom;
+    const matchTo = !filterDateTo || ts <= filterDateTo + 'T23:59:59';
+    return matchSearch && matchStatus && matchFrom && matchTo;
+  });
+
+  const totalRevenue = filtered.filter(s => s.status === 'COMPLETED').reduce((sum, s) => sum + (s.total || 0), 0);
+  const nbCompleted = filtered.filter(s => s.status === 'COMPLETED').length;
+  const nbCancelled = filtered.filter(s => s.status === 'CANCELLED').length;
+
+  // Annulation avec restauration de stock
+  const handleCancel = async () => {
+    if (!tenantId || !cancelTarget || !cancelMotif.trim()) return;
+    setIsCancelling(true);
+    try {
+      // 1. Marquer la vente comme annulée
+      await updateDoc(doc(db, tenantCol(tenantId, 'sales'), cancelTarget.id), {
+        status: 'CANCELLED',
+        motifAnnulation: cancelMotif.trim(),
+        cancelledBy: user?.id,
+        cancelledAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      // 2. Restaurer le stock pour chaque article
+      const items = await getDocs(collection(db, `tenants/${tenantId}/sales/${cancelTarget.id}/sale_items`));
+      for (const item of items.docs) {
+        const d = item.data();
+        if (!d.productId) continue;
+        const invSnap = await getDocs(
+          query(collection(db, tenantCol(tenantId, 'inventory')), where('productId', '==', d.productId))
+        );
+        if (!invSnap.empty) {
+          const invDoc = invSnap.docs[0];
+          const newQty = (invDoc.data().quantity || 0) + d.quantity;
+          await updateDoc(invDoc.ref, { quantity: newQty, updatedAt: serverTimestamp() });
+          // Mouvement de stock
+          await addDoc(collection(db, tenantCol(tenantId, 'inventory_movements')), {
+            tenantId, productId: d.productId,
+            storeId: invDoc.data().storeId,
+            type: 'IN', quantity: d.quantity,
+            previousQuantity: invDoc.data().quantity,
+            newQuantity: newQty,
+            reason: `Annulation vente #${cancelTarget.id.slice(0,8).toUpperCase()} — ${cancelMotif}`,
+            saleId: cancelTarget.id,
+            createdAt: serverTimestamp(),
+          });
+        }
+      }
+
+      setCancelTarget(null); setCancelMotif('');
+      if (selected?.id === cancelTarget.id) setSelected(prev => prev ? { ...prev, status: 'CANCELLED' } : null);
+    } catch (e) { console.error('Cancel error:', e); }
+    finally { setIsCancelling(false); }
+  };
+
+  const StatusBadge = ({ status }: { status: string }) => (
+    status === 'COMPLETED'
+      ? <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-green-100 text-green-700 font-medium"><CheckCircle2 className="h-3 w-3" />Complétée</span>
+      : <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-red-100 text-red-700 font-medium"><XCircle className="h-3 w-3" />Annulée</span>
+  );
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Historique des ventes</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              {nbCompleted} complétée{nbCompleted !== 1 ? 's' : ''} · {formatCurrency(totalRevenue)}
+              {nbCancelled > 0 && <span className="ml-2 text-red-500">· {nbCancelled} annulée{nbCancelled !== 1 ? 's' : ''}</span>}
+            </p>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-4">
+          {[
+            { label: 'Chiffre d\'affaires', value: formatCurrency(totalRevenue), color: 'text-primary-600' },
+            { label: 'Ventes complétées', value: nbCompleted, color: 'text-green-600' },
+            { label: 'Ventes annulées', value: nbCancelled, color: 'text-red-600' },
+          ].map((s, i) => (
+            <Card key={i}><CardContent className="p-4 text-center">
+              <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+              <p className="text-xs text-gray-500 mt-1">{s.label}</p>
+            </CardContent></Card>
+          ))}
+        </div>
+
+        {/* Filtres */}
+        <Card><CardContent className="p-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input placeholder="N° vente ou client..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+              {search && <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"><X className="h-4 w-4" /></button>}
+            </div>
+            <Select value={filterStatus} onValueChange={setFilterStatus}>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous</SelectItem>
+                <SelectItem value="COMPLETED">Complétées</SelectItem>
+                <SelectItem value="CANCELLED">Annulées</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} className="w-40" placeholder="Du" />
+            <Input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} className="w-40" placeholder="Au" />
+            {(filterDateFrom || filterDateTo || filterStatus !== 'all') && (
+              <Button variant="outline" size="sm" onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); setFilterStatus('all'); }}>
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </CardContent></Card>
+
+        {/* Layout */}
+        <div className={`gap-6 ${selected ? 'grid grid-cols-1 lg:grid-cols-2' : ''}`}>
+          <Card><CardContent className="p-0">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-16 text-gray-400"><RefreshCw className="h-5 w-5 animate-spin mr-2" />Chargement...</div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+                <ShoppingBag className="h-12 w-12 mb-4 opacity-30" />
+                <p className="font-medium">Aucune vente trouvée</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>N° Vente</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Client</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead>Paiement</TableHead>
+                    <TableHead>Statut</TableHead>
+                    <TableHead className="w-24" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map(s => {
+                    const pm = PM_LABELS[s.paymentMethod || 'CASH'];
+                    const Icon = pm?.icon || Banknote;
+                    return (
+                      <TableRow key={s.id}
+                        className={`hover:bg-gray-50 cursor-pointer ${selected?.id === s.id ? 'bg-primary-50' : ''}`}
+                        onClick={() => setSelected(s)}>
+                        <TableCell><code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{s.id.slice(0,8).toUpperCase()}</code></TableCell>
+                        <TableCell className="text-sm text-gray-500 whitespace-nowrap">{formatDateTime(s.createdAt)}</TableCell>
+                        <TableCell className="text-sm">{s.customerName || 'Client comptoir'}</TableCell>
+                        <TableCell className="text-right font-bold">{formatCurrency(s.total || 0)}</TableCell>
+                        <TableCell>
+                          <span className="flex items-center gap-1 text-xs text-gray-600">
+                            <Icon className="h-3 w-3" />{pm?.label || s.paymentMethod}
+                          </span>
+                        </TableCell>
+                        <TableCell><StatusBadge status={s.status} /></TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => { e.stopPropagation(); setSelected(s); }}>
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
+                            {s.status === 'COMPLETED' && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-red-400 hover:text-red-600"
+                                onClick={e => { e.stopPropagation(); setCancelTarget(s); setCancelMotif(''); }}>
+                                <XCircle className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent></Card>
+
+          {/* Panneau détail */}
+          {selected && (
+            <Card><CardContent className="p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-gray-900">Détail de la vente</h3>
+                <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+              </div>
+
+              <div className="space-y-3 mb-5 text-sm">
+                <div className="flex justify-between"><span className="text-gray-500">N° Vente</span><code className="text-xs bg-gray-100 px-2 py-1 rounded">{selected.id.slice(0,8).toUpperCase()}</code></div>
+                <div className="flex justify-between"><span className="text-gray-500">Date</span><span>{formatDateTime(selected.createdAt)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Client</span><span className="font-medium">{selected.customerName || 'Client comptoir'}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Paiement</span><span>{PM_LABELS[selected.paymentMethod || 'CASH']?.label || selected.paymentMethod}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Statut</span><StatusBadge status={selected.status} /></div>
+                {selected.status === 'CANCELLED' && selected.motifAnnulation && (
+                  <div className="bg-red-50 rounded-lg p-3">
+                    <p className="text-xs text-red-600 font-medium">Motif d'annulation</p>
+                    <p className="text-xs text-red-700 mt-1">{selected.motifAnnulation}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Articles */}
+              <p className="text-sm font-medium text-gray-900 mb-3">Articles vendus</p>
+              {loadingItems ? (
+                <div className="flex items-center justify-center py-4 text-gray-400"><RefreshCw className="h-4 w-4 animate-spin mr-2" />Chargement...</div>
+              ) : saleItems.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">Aucun article enregistré</p>
+              ) : (
+                <div className="space-y-2 mb-4">
+                  {saleItems.map((item, i) => (
+                    <div key={i} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
+                      <div>
+                        <p className="text-sm font-medium">{item.productName}</p>
+                        <p className="text-xs text-gray-400">{item.productSku} · {item.quantity} × {formatCurrency(item.unitPrice)}</p>
+                      </div>
+                      <p className="text-sm font-bold text-primary-600">{formatCurrency(item.total)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Totaux */}
+              <div className="border-t pt-3 space-y-1 text-sm">
+                {(selected.discountAmount || 0) > 0 && (
+                  <div className="flex justify-between text-green-600"><span>Remise ({selected.discountPercent}%)</span><span>-{formatCurrency(selected.discountAmount || 0)}</span></div>
+                )}
+                {(selected.tax || 0) > 0 && (
+                  <div className="flex justify-between text-gray-500"><span>TVA</span><span>{formatCurrency(selected.tax || 0)}</span></div>
+                )}
+                <div className="flex justify-between font-bold text-base pt-1 border-t">
+                  <span>TOTAL</span>
+                  <span className="text-primary-600">{formatCurrency(selected.total || 0)}</span>
+                </div>
+              </div>
+
+              {selected.status === 'COMPLETED' && (
+                <Button onClick={() => { setCancelTarget(selected); setCancelMotif(''); }}
+                  variant="outline" className="w-full mt-4 text-red-600 border-red-200 hover:bg-red-50">
+                  <XCircle className="h-4 w-4 mr-2" />Annuler cette vente
+                </Button>
+              )}
+            </CardContent></Card>
+          )}
+        </div>
+      </div>
+
+      {/* Dialog annulation */}
+      <AlertDialog open={!!cancelTarget} onOpenChange={o => { if (!o) { setCancelTarget(null); setCancelMotif(''); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Annuler cette vente ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <div className="space-y-3">
+                <p>Vente <strong>#{cancelTarget?.id.slice(0,8).toUpperCase()}</strong> — <strong>{formatCurrency(cancelTarget?.total || 0)}</strong></p>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                  ⚠️ Le stock sera automatiquement restauré pour tous les articles de cette vente.
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-sm">Motif d'annulation *</Label>
+                  <Textarea
+                    placeholder="Ex: Erreur de saisie, client a changé d'avis..."
+                    value={cancelMotif}
+                    onChange={e => setCancelMotif(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Retour</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCancel}
+              disabled={!cancelMotif.trim() || isCancelling}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isCancelling ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Annulation...</> : 'Confirmer l\'annulation'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </DashboardLayout>
+  );
+}
