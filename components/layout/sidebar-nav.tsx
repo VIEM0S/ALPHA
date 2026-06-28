@@ -23,10 +23,14 @@ import {
   Store,
   LogOut,
 } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils/helpers';
 import { useAuthStore, useUIStore } from '@/hooks/store';
-import { useState } from 'react';
+import { useLogout } from '@/hooks/useAuth';
 import { COMPANY_COLORS } from '@/lib/constants';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { db } from '@/lib/firebase/client';
+import { tenantCol } from '@/lib/firebase/collections';
 
 interface NavItem {
   title: string;
@@ -66,7 +70,7 @@ const navItems: NavItem[] = [
     children: [
       { title: 'Inventaire', href: '/inventory', icon: Warehouse },
       { title: 'Mouvements', href: '/inventory/movements', icon: Warehouse },
-      { title: 'Alertes', href: '/inventory/alerts', icon: Bell, badge: 3 },
+      { title: 'Alertes', href: '/inventory/alerts', icon: Bell, badge: 0, badgeKey: 'lowStock' },
     ],
   },
   {
@@ -78,7 +82,7 @@ const navItems: NavItem[] = [
     title: 'Crédits',
     href: '/credits',
     icon: CreditCard,
-    badge: 2,
+    badge: 0, badgeKey: 'overdueCredits',
   },
   {
     title: 'Fournisseurs',
@@ -109,7 +113,7 @@ const navItems: NavItem[] = [
     title: 'Notifications',
     href: '/notifications',
     icon: Bell,
-    badge: 5,
+    badge: 0,
   },
 ];
 
@@ -168,9 +172,9 @@ function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boole
               >
                 <child.icon className="h-4 w-4 flex-shrink-0" />
                 <span className="flex-1">{child.title}</span>
-                {child.badge && (
+                {getBadge((child as NavItem & { badgeKey?: string }).badgeKey, child.badge) > 0 && (
                   <span className="bg-danger-500 text-white text-xs px-2 py-0.5 rounded-full">
-                    {child.badge}
+                    {getBadge((child as NavItem & { badgeKey?: string }).badgeKey, child.badge)}
                   </span>
                 )}
               </Link>
@@ -197,9 +201,9 @@ function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boole
       {!collapsed && (
         <>
           <span className="flex-1">{item.title}</span>
-          {item.badge && (
+          {getBadge((item as NavItem & { badgeKey?: string }).badgeKey, item.badge) > 0 && (
             <span className="bg-danger-500 text-white text-xs px-2 py-0.5 rounded-full">
-              {item.badge}
+              {getBadge((item as NavItem & { badgeKey?: string }).badgeKey, item.badge)}
             </span>
           )}
         </>
@@ -210,7 +214,49 @@ function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boole
 
 export function Sidebar() {
   const { sidebarCollapsed } = useUIStore();
-  const { user, logout } = useAuthStore();
+  const { user, tenant, currentStore } = useAuthStore();
+  const handleLogout = useLogout();
+  const [lowStockCount, setLowStockCount] = useState(0);
+  const [overdueCount, setOverdueCount] = useState(0);
+
+  // Badges live Firestore
+  useEffect(() => {
+    const tenantId = tenant?.id;
+    const storeId = currentStore?.id;
+    if (!tenantId || !storeId) return;
+
+    // Stock faible — écoute inventaire
+    const unsubInv = onSnapshot(
+      collection(db, tenantCol(tenantId, 'inventory')),
+      async (invSnap) => {
+        const prodSnap = await import('firebase/firestore').then(({ getDocs }) =>
+          getDocs(collection(db, tenantCol(tenantId, 'products')))
+        );
+        const thresholds: Record<string, number> = {};
+        prodSnap.docs.forEach(d => { thresholds[d.id] = d.data().alertThreshold || 10; });
+        const low = invSnap.docs.filter(d => {
+          const data = d.data();
+          return data.storeId === storeId && (data.quantity || 0) <= (thresholds[data.productId] || 10);
+        }).length;
+        setLowStockCount(low);
+      }
+    );
+
+    // Crédits en retard
+    const unsubCred = onSnapshot(
+      query(collection(db, tenantCol(tenantId, 'credits')), where('status', '==', 'OVERDUE')),
+      snap => setOverdueCount(snap.size)
+    );
+
+    return () => { unsubInv(); unsubCred(); };
+  }, [tenant?.id, currentStore?.id]);
+
+  // Injecter les badges dynamiques
+  const getBadge = (badgeKey?: string, staticBadge?: number) => {
+    if (badgeKey === 'lowStock') return lowStockCount;
+    if (badgeKey === 'overdueCredits') return overdueCount;
+    return staticBadge || 0;
+  };
 
   const canShowAdminItems = user?.role && ['SUPER_ADMIN', 'OWNER'].includes(user.role);
 
@@ -272,7 +318,7 @@ export function Sidebar() {
                 <p className="text-xs text-gray-500 truncate">{user.email}</p>
               </div>
               <button
-                onClick={logout}
+                onClick={handleLogout}
                 className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
                 title="Déconnexion"
               >
