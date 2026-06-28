@@ -1,379 +1,511 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
-  Search,
-  Filter,
-  MoreHorizontal,
-  DollarSign,
-  Clock,
-  AlertTriangle,
-  CheckCircle2,
-  Phone,
-  Mail,
-  User,
-  Calendar
+  CreditCard, Search, X, Plus, RefreshCw,
+  AlertTriangle, Clock, CheckCircle2, ChevronRight,
+  User, Calendar, TrendingDown, Banknote
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from '@/components/ui/table';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogDescription
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { formatCurrency, formatDate, cn } from '@/lib/utils/helpers';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
+} from '@/components/ui/select';
+import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils/helpers';
+import { useAuthStore } from '@/hooks/store';
+import {
+  collection, query, orderBy, onSnapshot, where,
+  doc, addDoc, updateDoc, serverTimestamp, getDocs
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase/client';
+import { tenantCol } from '@/lib/firebase/collections';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Versement {
+  id: string;
+  creditId: string;
+  montant: number;
+  soldeAvant: number;
+  soldeApres: number;
+  userId: string;
+  userName: string;
+  createdAt: unknown;
+}
 
 interface Credit {
   id: string;
-  reference: string;
+  tenantId: string;
+  saleId: string;
+  customerId: string;
   customerName: string;
-  customerPhone: string;
-  saleReference: string;
-  totalAmount: number;
-  paidAmount: number;
-  remainingAmount: number;
-  dueDate: Date;
-  daysOverdue: number;
+  customerPhone?: string;
+  montantTotal: number;
+  acompte: number;
+  solde: number;
+  dateEcheance: string;
   status: 'PENDING' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE';
+  userId: string;
+  versements?: Versement[];
+  createdAt: unknown;
+  updatedAt: unknown;
 }
 
-const mockCredits: Credit[] = [
-  { id: 'cr1', reference: 'CRE-2024-0001', customerName: 'Construction Express SARL', customerPhone: '+223 79 98 76 54', saleReference: 'SAL-2024-000145', totalAmount: 350000, paidAmount: 150000, remainingAmount: 200000, dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000), daysOverdue: 0, status: 'PARTIALLY_PAID' },
-  { id: 'cr2', reference: 'CRE-2024-0002', customerName: 'Mamadou Traore', customerPhone: '+223 77 55 44 33', saleReference: 'SAL-2024-000142', totalAmount: 125000, paidAmount: 50000, remainingAmount: 75000, dueDate: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000), daysOverdue: 5, status: 'OVERDUE' },
-  { id: 'cr3', reference: 'CRE-2024-0003', customerName: 'Amadou Diallo', customerPhone: '+223 70 12 34 56', saleReference: 'SAL-2024-000139', totalAmount: 85000, paidAmount: 85000, remainingAmount: 0, dueDate: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000), daysOverdue: 0, status: 'PAID' },
-  { id: 'cr4', reference: 'CRE-2024-0004', customerName: 'Materiaux du Sud', customerPhone: '+223 20 30 40 50', saleReference: 'SAL-2024-000137', totalAmount: 750000, paidAmount: 0, remainingAmount: 750000, dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), daysOverdue: 0, status: 'PENDING' },
-  { id: 'cr5', reference: 'CRE-2024-0005', customerName: 'Fatou Keita', customerPhone: '+223 66 11 22 33', saleReference: 'SAL-2024-000135', totalAmount: 45000, paidAmount: 45000, remainingAmount: 0, dueDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), daysOverdue: 0, status: 'PAID' },
-  { id: 'cr6', reference: 'CRE-2024-0006', customerName: 'Alioune Diarra', customerPhone: '+223 65 43 21 98', saleReference: 'SAL-2024-000130', totalAmount: 180000, paidAmount: 60000, remainingAmount: 120000, dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), daysOverdue: 0, status: 'PARTIALLY_PAID' },
-];
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const STATUS_CONFIG = {
+  PENDING:        { label: 'En cours',      color: 'bg-amber-100 text-amber-700',  icon: Clock },
+  PARTIALLY_PAID: { label: 'Partiel',       color: 'bg-blue-100 text-blue-700',    icon: TrendingDown },
+  PAID:           { label: 'Soldé',         color: 'bg-green-100 text-green-700',  icon: CheckCircle2 },
+  OVERDUE:        { label: 'En retard',     color: 'bg-red-100 text-red-700',      icon: AlertTriangle },
+};
+
+function isEcheanceProche(dateStr: string): boolean {
+  if (!dateStr) return false;
+  const echeance = new Date(dateStr);
+  const now = new Date();
+  const diff = echeance.getTime() - now.getTime();
+  return diff > 0 && diff < 48 * 60 * 60 * 1000;
+}
+
+function isEnRetard(dateStr: string, status: string): boolean {
+  if (status === 'PAID') return false;
+  return new Date(dateStr) < new Date();
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CreditsPage() {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState<string>('all');
-  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
-  const [selectedCredit, setSelectedCredit] = useState<Credit | null>(null);
-  const [paymentAmount, setPaymentAmount] = useState<number>(0);
+  const { tenant, user } = useAuthStore();
+  const tenantId = tenant?.id;
 
-  const filteredCredits = mockCredits.filter((credit) => {
-    const matchesSearch = credit.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      credit.reference.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = selectedStatus === 'all' || credit.status === selectedStatus;
-    return matchesSearch && matchesStatus;
+  const [credits, setCredits] = useState<Credit[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('active');
+  const [selected, setSelected] = useState<Credit | null>(null);
+  const [versements, setVersements] = useState<Versement[]>([]);
+
+  // Formulaire versement
+  const [montantVersement, setMontantVersement] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [versementError, setVersementError] = useState<string | null>(null);
+
+  // ─── Listeners ─────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!tenantId) return;
+    const q = query(
+      collection(db, tenantCol(tenantId, 'credits')),
+      orderBy('dateEcheance', 'asc')
+    );
+    return onSnapshot(q, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Credit[];
+      // Marquer automatiquement en retard côté client
+      const updated = data.map(c => ({
+        ...c,
+        status: c.status !== 'PAID' && isEnRetard(c.dateEcheance, c.status)
+          ? 'OVERDUE' as const
+          : c.status,
+      }));
+      setCredits(updated);
+      setIsLoading(false);
+    });
+  }, [tenantId]);
+
+  // Charger les versements du crédit sélectionné
+  useEffect(() => {
+    if (!tenantId || !selected) { setVersements([]); return; }
+    const q = query(
+      collection(db, `tenants/${tenantId}/credits/${selected.id}/credit_payments`),
+      orderBy('createdAt', 'asc')
+    );
+    return onSnapshot(q, (snap) => {
+      setVersements(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Versement[]);
+    });
+  }, [tenantId, selected?.id]);
+
+  // ─── Filtres ────────────────────────────────────────────────────────────────
+
+  const filtered = credits.filter(c => {
+    const matchSearch = !search ||
+      c.customerName.toLowerCase().includes(search.toLowerCase()) ||
+      (c.customerPhone || '').includes(search);
+    const matchStatus =
+      filterStatus === 'all' ||
+      (filterStatus === 'active' && ['PENDING', 'PARTIALLY_PAID'].includes(c.status)) ||
+      (filterStatus === 'overdue' && c.status === 'OVERDUE') ||
+      (filterStatus === 'paid' && c.status === 'PAID');
+    return matchSearch && matchStatus;
   });
 
-  const totalCredits = mockCredits.reduce((sum, c) => sum + c.remainingAmount, 0);
-  const overdueCredits = mockCredits.filter(c => c.status === 'OVERDUE');
-  const overdueAmount = overdueCredits.reduce((sum, c) => sum + c.remainingAmount, 0);
+  // ─── Stats ──────────────────────────────────────────────────────────────────
 
-  const getStatusConfig = (status: Credit['status']) => {
-    switch (status) {
-      case 'PENDING':
-        return { label: 'En attente', color: 'warning' };
-      case 'PARTIALLY_PAID':
-        return { label: 'Partiel', color: 'accent' };
-      case 'PAID':
-        return { label: 'Payé', color: 'success' };
-      case 'OVERDUE':
-        return { label: 'En retard', color: 'danger' };
+  const totalEnCours = credits
+    .filter(c => ['PENDING', 'PARTIALLY_PAID'].includes(c.status))
+    .reduce((s, c) => s + c.solde, 0);
+  const nbActifs = credits.filter(c => ['PENDING', 'PARTIALLY_PAID'].includes(c.status)).length;
+  const nbEnRetard = credits.filter(c => c.status === 'OVERDUE').length;
+  const echeancesProches = credits.filter(
+    c => ['PENDING', 'PARTIALLY_PAID'].includes(c.status) && isEcheanceProche(c.dateEcheance)
+  );
+
+  // ─── Versement ──────────────────────────────────────────────────────────────
+
+  const handleVersement = async () => {
+    if (!tenantId || !selected || !user) return;
+    const montant = Number(montantVersement);
+    if (!montant || montant <= 0) {
+      setVersementError('Montant invalide'); return;
+    }
+    if (montant > selected.solde) {
+      setVersementError(`Montant supérieur au solde restant (${formatCurrency(selected.solde)})`); return;
+    }
+
+    setIsSaving(true);
+    setVersementError(null);
+
+    try {
+      const soldeAvant = selected.solde;
+      const soldeApres = Math.max(0, soldeAvant - montant);
+      const nouveauStatut = soldeApres === 0 ? 'PAID'
+        : soldeApres < selected.montantTotal ? 'PARTIALLY_PAID'
+        : selected.status;
+
+      // Enregistrer le versement
+      await addDoc(
+        collection(db, `tenants/${tenantId}/credits/${selected.id}/credit_payments`),
+        {
+          creditId: selected.id,
+          montant,
+          soldeAvant,
+          soldeApres,
+          userId: user.id,
+          userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+          createdAt: serverTimestamp(),
+        }
+      );
+
+      // Mettre à jour le crédit
+      await updateDoc(doc(db, tenantCol(tenantId, 'credits'), selected.id), {
+        solde: soldeApres,
+        status: nouveauStatut,
+        updatedAt: serverTimestamp(),
+      });
+
+      // Mettre à jour le crédit utilisé du client
+      const customerSnap = await getDocs(
+        query(collection(db, tenantCol(tenantId, 'customers')),
+          where('__name__', '==', selected.customerId))
+      );
+      if (!customerSnap.empty) {
+        const customerDoc = customerSnap.docs[0];
+        const currentUsed = customerDoc.data().creditUsed || 0;
+        await updateDoc(customerDoc.ref, {
+          creditUsed: Math.max(0, currentUsed - montant),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      setMontantVersement('');
+      // Mettre à jour le selected localement
+      setSelected(prev => prev ? { ...prev, solde: soldeApres, status: nouveauStatut } : null);
+    } catch (e) {
+      setVersementError('Erreur lors de l\'enregistrement');
+      console.error(e);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handlePayment = () => {
-    setSelectedCredit(null);
-    setShowPaymentDialog(false);
-    setPaymentAmount(0);
+  // ─── Render ─────────────────────────────────────────────────────────────────
+
+  const StatusBadge = ({ status }: { status: Credit['status'] }) => {
+    const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.PENDING;
+    const Icon = cfg.icon;
+    return (
+      <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${cfg.color}`}>
+        <Icon className="h-3 w-3" />{cfg.label}
+      </span>
+    );
   };
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
+
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Gestion des crédits</h1>
-            <p className="text-gray-500">Suivez les créances clients et paiements</p>
+            <h1 className="text-2xl font-bold text-gray-900">Crédits clients</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              {nbActifs} crédit{nbActifs !== 1 ? 's' : ''} actif{nbActifs !== 1 ? 's' : ''}
+              {nbEnRetard > 0 && <span className="ml-2 text-red-600 font-medium">· {nbEnRetard} en retard</span>}
+            </p>
           </div>
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
+        {/* Alerte échéances proches */}
+        {echeancesProches.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-amber-800">
+                {echeancesProches.length} crédit{echeancesProches.length > 1 ? 's arrivent' : ' arrive'} à échéance dans moins de 48h
+              </p>
+              <p className="text-xs text-amber-700 mt-1">
+                {echeancesProches.map(c => `${c.customerName} (${formatCurrency(c.solde)})`).join(' · ')}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { label: 'Total en cours', value: formatCurrency(totalEnCours), icon: CreditCard, color: 'text-amber-600' },
+            { label: 'Crédits actifs', value: nbActifs, icon: Clock, color: 'text-blue-600' },
+            { label: 'En retard', value: nbEnRetard, icon: AlertTriangle, color: 'text-red-600' },
+            { label: 'Échéances < 48h', value: echeancesProches.length, icon: Calendar, color: echeancesProches.length > 0 ? 'text-red-600' : 'text-gray-500' },
+          ].map((s, i) => (
+            <Card key={i}><CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <s.icon className={`h-8 w-8 ${s.color} opacity-80`} />
                 <div>
-                  <p className="text-sm text-gray-500">Crédits actifs</p>
-                  <p className="text-2xl font-bold">{mockCredits.filter(c => c.status !== 'PAID').length}</p>
+                  <p className="text-xs text-gray-500">{s.label}</p>
+                  <p className="text-xl font-bold text-gray-900">{s.value}</p>
                 </div>
-                <DollarSign className="h-8 w-8 text-primary-200" />
               </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-500">Total impayé</p>
-                  <p className="text-2xl font-bold text-warning-600">{formatCurrency(totalCredits)}</p>
-                </div>
-                <DollarSign className="h-8 w-8 text-warning-200" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-500">En retard</p>
-                  <p className="text-2xl font-bold text-danger-600">{overdueCredits.length}</p>
-                </div>
-                <AlertTriangle className="h-8 w-8 text-danger-200" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-500">Montant en retard</p>
-                  <p className="text-2xl font-bold text-danger-600">{formatCurrency(overdueAmount)}</p>
-                </div>
-                <AlertTriangle className="h-8 w-8 text-danger-200" />
-              </div>
-            </CardContent>
-          </Card>
+            </CardContent></Card>
+          ))}
         </div>
 
-        {/* Filters */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Rechercher par client ou référence..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <div className="flex gap-2">
-                {[
-                  { value: 'all', label: 'Tous' },
-                  { value: 'OVERDUE', label: 'En retard', color: 'danger' },
-                  { value: 'PARTIALLY_PAID', label: 'Partiel', color: 'accent' },
-                  { value: 'PENDING', label: 'En attente', color: 'warning' },
-                ].map((filter) => (
-                  <Button
-                    key={filter.value}
-                    variant={selectedStatus === filter.value ? 'default' : 'outline'}
-                    onClick={() => setSelectedStatus(filter.value)}
-                    className={filter.color && selectedStatus !== filter.value ? `text-${filter.color}-600` : ''}
-                  >
-                    {filter.label}
-                  </Button>
-                ))}
-              </div>
+        {/* Filtres */}
+        <Card><CardContent className="p-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input placeholder="Rechercher par client ou téléphone..." value={search}
+                onChange={e => setSearch(e.target.value)} className="pl-9" />
+              {search && <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>}
             </div>
-          </CardContent>
-        </Card>
+            <div className="flex gap-2">
+              {[
+                { val: 'active', label: 'En cours' },
+                { val: 'overdue', label: 'En retard' },
+                { val: 'paid', label: 'Soldés' },
+                { val: 'all', label: 'Tous' },
+              ].map(opt => (
+                <Button key={opt.val} variant={filterStatus === opt.val ? 'default' : 'outline'}
+                  size="sm" onClick={() => setFilterStatus(opt.val)}
+                  className={filterStatus === opt.val ? 'bg-primary-600 hover:bg-primary-700' : ''}>
+                  {opt.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </CardContent></Card>
 
-        {/* Credits Table */}
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Créance</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Montant total</TableHead>
-                  <TableHead>Payé</TableHead>
-                  <TableHead>Reste</TableHead>
-                  <TableHead>Échéance</TableHead>
-                  <TableHead>Statut</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredCredits.map((credit) => {
-                  const statusConfig = getStatusConfig(credit.status);
-                  const progress = (credit.paidAmount / credit.totalAmount) * 100;
-
-                  return (
-                    <TableRow key={credit.id} className="hover:bg-gray-50">
-                      <TableCell>
-                        <div>
-                          <p className="font-medium text-gray-900">{credit.reference}</p>
-                          <p className="text-xs text-gray-500">{credit.saleReference}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div className="h-8 w-8 rounded-full bg-primary-100 flex items-center justify-center">
-                            <User className="h-4 w-4 text-primary-600" />
+        {/* Layout principal */}
+        <div className={`gap-6 ${selected ? 'grid grid-cols-1 lg:grid-cols-2' : ''}`}>
+          {/* Table crédits */}
+          <Card><CardContent className="p-0">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-16 text-gray-400">
+                <RefreshCw className="h-5 w-5 animate-spin mr-2" />Chargement...
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+                <CreditCard className="h-12 w-12 mb-4 opacity-30" />
+                <p className="font-medium">Aucun crédit trouvé</p>
+                <p className="text-sm mt-1">Les crédits sont créés depuis le POS lors d'un paiement en crédit</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Client</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Solde restant</TableHead>
+                    <TableHead>Échéance</TableHead>
+                    <TableHead>Statut</TableHead>
+                    <TableHead className="w-8" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map(c => {
+                    const proche = isEcheanceProche(c.dateEcheance) && ['PENDING', 'PARTIALLY_PAID'].includes(c.status);
+                    const pct = c.montantTotal > 0 ? ((c.montantTotal - c.solde) / c.montantTotal) * 100 : 0;
+                    return (
+                      <TableRow key={c.id}
+                        className={`hover:bg-gray-50 cursor-pointer ${selected?.id === c.id ? 'bg-primary-50' : ''}`}
+                        onClick={() => { setSelected(c); setMontantVersement(''); setVersementError(null); }}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-600">
+                              {c.customerName[0]}
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">{c.customerName}</p>
+                              {c.customerPhone && <p className="text-xs text-gray-400">{c.customerPhone}</p>}
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-medium text-sm">{credit.customerName}</p>
-                            <p className="text-xs text-gray-500">{credit.customerPhone}</p>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="font-medium">{formatCurrency(credit.totalAmount)}</TableCell>
-                      <TableCell>{formatCurrency(credit.paidAmount)}</TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <p className={cn(
-                            'font-semibold',
-                            credit.remainingAmount > 0 ? 'text-warning-600' : 'text-success-600'
-                          )}>
-                            {formatCurrency(credit.remainingAmount)}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">{formatCurrency(c.montantTotal)}</TableCell>
+                        <TableCell className="text-right">
+                          <p className={`font-bold text-sm ${c.status === 'PAID' ? 'text-green-600' : 'text-amber-600'}`}>
+                            {formatCurrency(c.solde)}
                           </p>
-                          <div className="h-1 w-16 bg-gray-200 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-primary-500 rounded-full transition-all"
-                              style={{ width: `${progress}%` }}
-                            />
+                          <div className="w-16 h-1 bg-gray-200 rounded-full mt-1 ml-auto">
+                            <div className="h-1 bg-green-500 rounded-full" style={{ width: `${Math.min(pct, 100)}%` }} />
                           </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-4 w-4 text-gray-400" />
-                          <div>
-                            <p className={cn(
-                              'text-sm',
-                              credit.daysOverdue > 0 && 'text-danger-600 font-medium'
-                            )}>
-                              {formatDate(credit.dueDate)}
-                            </p>
-                            {credit.daysOverdue > 0 && (
-                              <p className="text-xs text-danger-500">
-                                {credit.daysOverdue} jours de retard
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={cn(
-                          statusConfig.color === 'danger' && 'border-danger-300 text-danger-600',
-                          statusConfig.color === 'warning' && 'border-warning-300 text-warning-600',
-                          statusConfig.color === 'success' && 'border-success-300 text-success-600',
-                          statusConfig.color === 'accent' && 'border-accent-300 text-accent-600'
-                        )}>
-                          {statusConfig.label}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {credit.status !== 'PAID' && (
-                              <DropdownMenuItem onClick={() => {
-                                setSelectedCredit(credit);
-                                setPaymentAmount(credit.remainingAmount);
-                                setShowPaymentDialog(true);
-                              }}>
-                                <DollarSign className="h-4 w-4 mr-2" />
-                                Enregistrer paiement
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem>
-                              <Phone className="h-4 w-4 mr-2" />
-                              Appeler client
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <Mail className="h-4 w-4 mr-2" />
-                              Envoyer rappel
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+                        </TableCell>
+                        <TableCell>
+                          <span className={`text-sm ${proche ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                            {formatDate(c.dateEcheance)}{proche && ' ⚠️'}
+                          </span>
+                        </TableCell>
+                        <TableCell><StatusBadge status={c.status} /></TableCell>
+                        <TableCell><ChevronRight className="h-4 w-4 text-gray-400" /></TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent></Card>
 
-        {/* Payment Dialog */}
-        <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Enregistrer un paiement</DialogTitle>
-              <DialogDescription>
-                Créance: {selectedCredit?.reference} - {selectedCredit?.customerName}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">Montant total</span>
-                  <span className="font-medium">{selectedCredit && formatCurrency(selectedCredit.totalAmount)}</span>
+          {/* Panneau détail */}
+          {selected && (
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between mb-5">
+                  <h3 className="font-bold text-gray-900">Détail du crédit</h3>
+                  <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
+                    <X className="h-5 w-5" />
+                  </button>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">Déjà payé</span>
-                  <span>{selectedCredit && formatCurrency(selectedCredit.paidAmount)}</span>
+
+                {/* Client */}
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center font-bold text-primary-700">
+                    {selected.customerName[0]}
+                  </div>
+                  <div>
+                    <p className="font-bold text-gray-900">{selected.customerName}</p>
+                    {selected.customerPhone && <p className="text-sm text-gray-400">{selected.customerPhone}</p>}
+                  </div>
                 </div>
-                <div className="flex justify-between text-sm font-semibold pt-2 border-t">
-                  <span>Reste à payer</span>
-                  <span className="text-warning-600">{selectedCredit && formatCurrency(selectedCredit.remainingAmount)}</span>
+
+                {/* Infos montants */}
+                <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-gray-500 text-xs mb-1">Montant initial</p>
+                    <p className="font-bold">{formatCurrency(selected.montantTotal)}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-gray-500 text-xs mb-1">Acompte versé</p>
+                    <p className="font-bold">{formatCurrency(selected.acompte)}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="paymentAmount">Montant du paiement</Label>
-                <Input
-                  id="paymentAmount"
-                  type="number"
-                  value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(parseFloat(e.target.value) || 0)}
-                />
-              </div>
-              <div className="flex gap-2">
-                {[selectedCredit?.remainingAmount && selectedCredit.remainingAmount * 0.5, selectedCredit?.remainingAmount]?.map((amount, i) => (
-                  amount && (
-                    <Button key={i} variant="outline" size="sm" onClick={() => setPaymentAmount(amount)}>
-                      {formatCurrency(amount)}
-                    </Button>
-                  )
-                ))}
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowPaymentDialog(false)}>
-                Annuler
-              </Button>
-              <Button onClick={handlePayment}>
-                <CheckCircle2 className="h-4 w-4 mr-2" />
-                Confirmer le paiement
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+
+                {/* Solde en grand */}
+                <div className={`rounded-xl p-4 text-center mb-5 ${selected.status === 'PAID' ? 'bg-green-50 border border-green-200' : selected.status === 'OVERDUE' ? 'bg-red-50 border border-red-200' : 'bg-amber-50 border border-amber-200'}`}>
+                  <p className="text-xs text-gray-500 mb-1">Solde restant</p>
+                  <p className={`text-3xl font-bold ${selected.status === 'PAID' ? 'text-green-700' : selected.status === 'OVERDUE' ? 'text-red-700' : 'text-amber-700'}`}>
+                    {formatCurrency(selected.solde)}
+                  </p>
+                  <div className="flex items-center justify-center gap-2 mt-2">
+                    <StatusBadge status={selected.status} />
+                    <span className="text-xs text-gray-500">· Échéance : {formatDate(selected.dateEcheance)}</span>
+                  </div>
+                  {/* Barre de progression remboursement */}
+                  {selected.montantTotal > 0 && (
+                    <div className="mt-3">
+                      <div className="w-full h-2 bg-gray-200 rounded-full">
+                        <div className="h-2 bg-green-500 rounded-full transition-all"
+                          style={{ width: `${Math.min(((selected.montantTotal - selected.solde) / selected.montantTotal) * 100, 100)}%` }} />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {Math.round(((selected.montantTotal - selected.solde) / selected.montantTotal) * 100)}% remboursé
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Formulaire versement */}
+                {['PENDING', 'PARTIALLY_PAID', 'OVERDUE'].includes(selected.status) && (
+                  <div className="mb-5">
+                    <p className="text-sm font-medium text-gray-900 mb-3 flex items-center gap-2">
+                      <Banknote className="h-4 w-4" />
+                      Enregistrer un versement
+                    </p>
+                    {versementError && (
+                      <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 mb-3">
+                        {versementError}
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <Input
+                        type="number" min="1" max={selected.solde}
+                        placeholder={`Max ${formatCurrency(selected.solde)}`}
+                        value={montantVersement}
+                        onChange={e => { setMontantVersement(e.target.value); setVersementError(null); }}
+                        className="flex-1"
+                      />
+                      <Button
+                        onClick={handleVersement}
+                        disabled={isSaving || !montantVersement}
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" />Valider</>}
+                      </Button>
+                    </div>
+                    {montantVersement && Number(montantVersement) > 0 && Number(montantVersement) <= selected.solde && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        Solde après versement : <strong>{formatCurrency(selected.solde - Number(montantVersement))}</strong>
+                        {Number(montantVersement) >= selected.solde && ' → Crédit soldé ✅'}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Historique versements */}
+                <div>
+                  <p className="text-sm font-medium text-gray-900 mb-3">Historique des versements</p>
+                  {versements.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-4">Aucun versement enregistré</p>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {versements.map(v => (
+                        <div key={v.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                          <div>
+                            <p className="text-sm font-bold text-green-700">+{formatCurrency(v.montant)}</p>
+                            <p className="text-xs text-gray-400">{formatDateTime(v.createdAt)} · {v.userName}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs text-gray-500">Solde après</p>
+                            <p className="text-sm font-medium">{formatCurrency(v.soldeApres)}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       </div>
     </DashboardLayout>
   );
