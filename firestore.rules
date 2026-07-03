@@ -1,0 +1,200 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function tenantId() {
+      return request.auth.token.tenantId;
+    }
+
+    function role() {
+      return request.auth.token.role;
+    }
+
+    function isOwnerOrAdmin() {
+      return role() in ['OWNER', 'ADMIN'];
+    }
+
+    function isManager() {
+      return role() in ['OWNER', 'ADMIN', 'MANAGER'];
+    }
+
+    function belongsToTenant(tid) {
+      return isAuth() && tenantId() == tid;
+    }
+
+    // ─── Tenants ─────────────────────────────────────────────────────────────
+
+    match /tenants/{tenantId} {
+      allow read: if belongsToTenant(tenantId);
+      allow update: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+      allow create, delete: if false; // Uniquement via Admin SDK (setup)
+
+      // ─── Users ─────────────────────────────────────────────────────────────
+      match /users/{userId} {
+        allow read: if belongsToTenant(tenantId);
+        // Chaque utilisateur peut mettre à jour son propre profil
+        allow update: if belongsToTenant(tenantId) &&
+          (request.auth.uid == userId || isOwnerOrAdmin());
+        allow create, delete: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+      }
+
+      // ─── Stores ────────────────────────────────────────────────────────────
+      match /stores/{storeId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+      }
+
+      // ─── Subscriptions ─────────────────────────────────────────────────────
+      match /subscriptions/{subId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if false; // Uniquement via Admin SDK
+      }
+
+      // ─── Categories ────────────────────────────────────────────────────────
+      match /categories/{catId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if belongsToTenant(tenantId) && isManager();
+      }
+
+      // ─── Products ──────────────────────────────────────────────────────────
+      match /products/{productId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if belongsToTenant(tenantId) && isManager();
+      }
+
+      // ─── Inventory ─────────────────────────────────────────────────────────
+      match /inventory/{invId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if belongsToTenant(tenantId) && isManager();
+      }
+
+      match /inventory_movements/{movId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create: if belongsToTenant(tenantId);
+        allow update, delete: if false; // Les mouvements sont immuables
+      }
+
+      // ─── Customers ─────────────────────────────────────────────────────────
+      match /customers/{customerId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if belongsToTenant(tenantId) && isManager();
+      }
+
+      // ─── Suppliers ─────────────────────────────────────────────────────────
+      match /suppliers/{supplierId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if belongsToTenant(tenantId) && isManager();
+      }
+
+      // ─── Sales ─────────────────────────────────────────────────────────────
+      match /sales/{saleId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create: if belongsToTenant(tenantId);
+        // Annulation uniquement par Manager+
+        allow update: if belongsToTenant(tenantId) && isManager();
+        allow delete: if false;
+
+        match /sale_items/{itemId} {
+          allow read: if belongsToTenant(tenantId);
+          allow create: if belongsToTenant(tenantId);
+          allow update, delete: if false;
+        }
+
+        match /payments/{paymentId} {
+          allow read: if belongsToTenant(tenantId);
+          allow create: if belongsToTenant(tenantId);
+          allow update, delete: if false;
+        }
+      }
+
+      // ─── Credits ───────────────────────────────────────────────────────────
+      match /credits/{creditId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create: if belongsToTenant(tenantId);
+        allow update: if belongsToTenant(tenantId) && isManager();
+        allow delete: if false;
+
+        match /credit_payments/{payId} {
+          allow read: if belongsToTenant(tenantId);
+          allow create: if belongsToTenant(tenantId) && isManager();
+          allow update, delete: if false;
+        }
+      }
+
+      // ─── Quotes ────────────────────────────────────────────────────────────
+      match /quotes/{quoteId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create: if belongsToTenant(tenantId) && isManager();
+        allow update: if belongsToTenant(tenantId) && isManager();
+        allow delete: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+
+        match /quote_items/{itemId} {
+          allow read: if belongsToTenant(tenantId);
+          allow write: if belongsToTenant(tenantId) && isManager();
+        }
+      }
+
+      // ─── Cash registers ────────────────────────────────────────────────────
+      match /cash_registers/{regId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if belongsToTenant(tenantId) && isManager();
+      }
+
+      match /cash_sessions/{sessionId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create: if belongsToTenant(tenantId);
+        allow update: if belongsToTenant(tenantId) && isManager();
+        allow delete: if false;
+      }
+
+      // ─── Invoices ──────────────────────────────────────────────────────────
+      match /invoices/{invoiceId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create: if belongsToTenant(tenantId) && isManager();
+        allow update: if belongsToTenant(tenantId) && isManager();
+        allow delete: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+      }
+
+      // ─── Alerts ────────────────────────────────────────────────────────────
+      match /alerts/{alertId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if belongsToTenant(tenantId);
+      }
+
+      // ─── Notifications ─────────────────────────────────────────────────────
+      match /notifications/{notifId} {
+        allow read: if belongsToTenant(tenantId) &&
+          (resource.data.userId == request.auth.uid || isOwnerOrAdmin());
+        allow create: if belongsToTenant(tenantId);
+        allow update: if belongsToTenant(tenantId) &&
+          resource.data.userId == request.auth.uid;
+        allow delete: if false;
+      }
+
+      // ─── Audit logs ────────────────────────────────────────────────────────
+      match /audit_logs/{logId} {
+        allow read: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+        allow create: if belongsToTenant(tenantId);
+        allow update, delete: if false; // Immuables
+      }
+
+      // ─── Error logs ────────────────────────────────────────────────────────
+      match /error_logs/{logId} {
+        allow read: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+        allow create: if belongsToTenant(tenantId);
+        allow update, delete: if false;
+      }
+    }
+
+    // Refuser tout le reste
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

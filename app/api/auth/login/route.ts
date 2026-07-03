@@ -1,0 +1,122 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { adminAuth, adminDb } from '@/lib/firebase/admin';
+
+export async function POST(request: NextRequest) {
+  try {
+    const { idToken } = await request.json();
+
+    if (!idToken) {
+      return NextResponse.json({ error: 'Token manquant' }, { status: 400 });
+    }
+
+    // Vérifier le token Firebase Auth côté serveur
+    let decoded;
+    try {
+      decoded = await adminAuth.verifyIdToken(idToken);
+    } catch (e: unknown) {
+      console.error('❌ verifyIdToken error:', e);
+      return NextResponse.json({ error: 'Token Firebase invalide: ' + (e instanceof Error ? e.message : String(e)) }, { status: 401 });
+    }
+
+    const uid = decoded.uid;
+
+    // Récupérer le profil utilisateur dans Firestore
+    let userSnap;
+    try {
+      userSnap = await adminDb
+        .collectionGroup('users')
+        .where('uid', '==', uid)
+        .limit(1)
+        .get();
+    } catch (e: unknown) {
+      console.error('❌ Firestore collectionGroup error:', e);
+      return NextResponse.json({ error: 'Erreur Firestore: ' + (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    }
+
+    if (userSnap.empty) {
+      return NextResponse.json({ error: 'Profil utilisateur introuvable' }, { status: 404 });
+    }
+
+    const userDoc = userSnap.docs[0];
+    const userData = userDoc.data();
+
+    if (!userData.isActive) {
+      return NextResponse.json({ error: 'Compte désactivé' }, { status: 403 });
+    }
+
+    const tenantId = userData.tenantId;
+
+    // Récupérer le tenant
+    const tenantSnap = await adminDb.collection('tenants').doc(tenantId).get();
+    if (!tenantSnap.exists) {
+      return NextResponse.json({ error: 'Tenant introuvable' }, { status: 404 });
+    }
+    const tenantData = { id: tenantSnap.id, ...tenantSnap.data() };
+
+    // Récupérer les magasins du tenant
+    const storesSnap = await adminDb
+      .collection(`tenants/${tenantId}/stores`)
+      .where('isActive', '==', true)
+      .get();
+    const stores = storesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    // Récupérer l'abonnement
+    const subSnap = await adminDb
+      .collection(`tenants/${tenantId}/subscriptions`)
+      .limit(1)
+      .get();
+    const subscription = subSnap.empty
+      ? null
+      : { id: subSnap.docs[0].id, ...subSnap.docs[0].data() };
+
+    // Injecter les custom claims Firebase
+    const existingClaims = decoded;
+    if (existingClaims.tenantId !== tenantId || existingClaims.role !== userData.role) {
+      await adminAuth.setCustomUserClaims(uid, { tenantId, role: userData.role });
+    }
+
+    // Créer session cookie (7 jours)
+    const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+    let sessionCookie;
+    try {
+      sessionCookie = await adminAuth.createSessionCookie(idToken, {
+        expiresIn: SESSION_DURATION_MS,
+      });
+    } catch (e: unknown) {
+      console.error('❌ createSessionCookie error:', e);
+      return NextResponse.json({ error: 'Erreur création session: ' + (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    }
+
+    // Mettre à jour lastLoginAt
+    await userDoc.ref.update({ lastLoginAt: new Date().toISOString() });
+
+    // Audit log
+    await adminDb.collection(`tenants/${tenantId}/audit_logs`).add({
+      userId: uid,
+      action: 'LOGIN',
+      entity: 'users',
+      entityId: uid,
+      createdAt: new Date().toISOString(),
+    });
+
+    const response = NextResponse.json({
+      user: { id: userDoc.id, ...userData },
+      tenant: { ...tenantData, subscription },
+      stores,
+    });
+
+    response.cookies.set('__session', sessionCookie, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: SESSION_DURATION_MS / 1000,
+      path: '/',
+    });
+
+    return response;
+  } catch (error: unknown) {
+    console.error('❌ Login error:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
