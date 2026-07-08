@@ -320,10 +320,10 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-4 text-sm">
-                <div><p className="text-gray-500">Plan</p><p className="font-bold text-lg text-purple-700">{(tenant as unknown as Record<string, string>).subscription?.plan || 'BUSINESS'}</p></div>
+                <div><p className="text-gray-500">Plan</p><p className="font-bold text-lg text-purple-700">{((tenant as unknown as { subscription?: { plan?: string } })?.subscription?.plan) || 'BUSINESS'}</p></div>
                 <div><p className="text-gray-500">Statut</p>
                   <span className="inline-block mt-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                    {(tenant as unknown as Record<string, string>).subscription?.status || 'TRIAL'}
+                    {((tenant as unknown as { subscription?: { status?: string } })?.subscription?.status) || 'TRIAL'}
                   </span>
                 </div>
               </div>

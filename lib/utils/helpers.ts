@@ -159,3 +159,20 @@ export function isValidPhone(phone: string): boolean {
   const phoneRegex = /^(\+223|00223)?[0-9]{8}$/;
   return phoneRegex.test(phone.replace(/\s/g, ''));
 }
+
+/** Convertit n'importe quel format Firestore en Date JS — version exportée pour usage dans les pages */
+export function toFirestoreDate(v: unknown): Date {
+  if (!v) return new Date();
+  if (typeof v === 'object' && v !== null && 'toDate' in v && typeof (v as { toDate: () => Date }).toDate === 'function') {
+    return (v as { toDate: () => Date }).toDate();
+  }
+  if (typeof v === 'object' && v !== null && 'seconds' in v && typeof (v as { seconds: number }).seconds === 'number') {
+    return new Date((v as { seconds: number }).seconds * 1000);
+  }
+  if (typeof v === 'string') {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? new Date() : d;
+  }
+  if (v instanceof Date) return isNaN(v.getTime()) ? new Date() : v;
+  return new Date();
+}

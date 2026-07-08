@@ -313,7 +313,7 @@ export default function CustomersPage() {
           <div className="grid grid-cols-2 gap-4 py-2">
             <div className="space-y-2">
               <Label>Code client</Label>
-              <Input value={form.code} onChange={(e) => f('code', e.target.value)} placeholder="CLI-001" />
+              <Input value={form.code} onChange={(e) => f('code', e.target.value)} placeholder="CLI-001" autoFocus />
             </div>
             <div className="space-y-2">
               <Label>Type *</Label>

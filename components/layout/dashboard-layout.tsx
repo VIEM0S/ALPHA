@@ -12,13 +12,23 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-  // Initialise et surveille la session Firebase Auth
   useAuth();
 
   const { user, isLoading } = useAuthStore();
-  const { sidebarCollapsed } = useUIStore();
+  const { sidebarCollapsed, toggleSidebar } = useUIStore();
 
-  // Pendant le chargement initial
+  // Raccourci clavier global : Ctrl+B pour toggle sidebar
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [toggleSidebar]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -30,18 +40,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     );
   }
 
-  // useAuth redirige vers /login si pas de user — ce cas ne devrait pas s'afficher
   if (!user) return null;
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar />
-      <div
-        className={cn(
-          'transition-all duration-300',
-          sidebarCollapsed ? 'ml-16' : 'ml-64'
-        )}
-      >
+      <div className={cn('transition-all duration-300', sidebarCollapsed ? 'ml-16' : 'ml-64')}>
         <Header />
         <main className="p-4 lg:p-6">
           {children}

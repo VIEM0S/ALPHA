@@ -15,7 +15,7 @@ export interface User {
   updatedAt: Date;
 }
 
-export type UserRole = 'SUPER_ADMIN' | 'OWNER' | 'MANAGER' | 'CASHIER';
+export type UserRole = 'SUPER_ADMIN' | 'OWNER' | 'ADMIN' | 'MANAGER' | 'CASHIER';
 
 export interface Tenant {
   id: string;

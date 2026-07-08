@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, Search, Settings, Store, X, ChevronDown, CheckCircle2 } from 'lucide-react';
+import { Bell, Search, Settings, Store, X, ChevronDown, CheckCircle2, PanelLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils/helpers';
@@ -48,8 +48,14 @@ export function Header() {
   return (
     <header className="h-16 bg-white border-b border-gray-100 flex items-center justify-between px-4 lg:px-6 shadow-sm">
 
-      {/* Gauche — sélecteur magasin */}
+      {/* Gauche — toggle sidebar + sélecteur magasin */}
       <div className="flex items-center gap-3">
+        <button
+          onClick={toggleSidebar}
+          title="Réduire/agrandir la sidebar (Ctrl+B)"
+          className="p-2 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors flex-shrink-0">
+          <PanelLeft className="h-5 w-5" />
+        </button>
         {stores.length > 0 && (
           <div className="relative">
             <button onClick={() => setStoreDropdownOpen(!storeDropdownOpen)}

@@ -13,7 +13,7 @@ import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
 import { useRouter } from 'next/navigation';
 
-interface Product { id: string; name: string; sku: string; unit: string; alertThreshold: number; purchasePrice: number; }
+interface Product { id: string; name: string; sku: string; unit: string; alertThreshold: number; purchasePrice: number; trackInventory: boolean; }
 interface InventoryItem { id: string; productId: string; storeId: string; quantity: number; }
 
 export default function AlertsPage() {

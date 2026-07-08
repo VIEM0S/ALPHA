@@ -30,7 +30,7 @@ import {
 import { ChevronDown } from 'lucide-react';
 import { useAuthStore } from '@/hooks/store';
 import {
-  collection, query, orderBy, onSnapshot,
+  collection, query, orderBy, onSnapshot, where, getDocs,
   doc, addDoc, updateDoc, deleteDoc, serverTimestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
@@ -61,6 +61,7 @@ export default function CategoriesPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
+  const [linkedProductsCount, setLinkedProductsCount] = useState<number | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
@@ -241,7 +242,7 @@ export default function CategoriesPage() {
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label>Nom *</Label>
-              <Input placeholder="ex: Ciment & Béton" value={form.name}
+              <Input placeholder="ex: Ciment & Béton" autoFocus value={form.name}
                 onChange={(e) => f('name', e.target.value)} />
             </div>
             <div className="space-y-2">

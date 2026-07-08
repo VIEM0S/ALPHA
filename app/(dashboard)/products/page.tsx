@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import {
   Plus, Search, Edit, Trash2, Package,
-  AlertTriangle, Upload, RefreshCw, X, ChevronDown
+  AlertTriangle, RefreshCw, X, ChevronDown
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -87,7 +87,7 @@ const UNITS = [
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ProductsPage() {
+function ProductsPageInner() {
   const { tenant } = useAuthStore();
   const tenantId = tenant?.id;
 
@@ -490,7 +490,7 @@ export default function ProductsPage() {
             <div className="space-y-2">
               <Label>SKU / Référence *</Label>
               <Input
-                placeholder="ex: CM-PT-50"
+                placeholder="ex: CM-PT-50" autoFocus
                 value={form.sku}
                 onChange={(e) => f('sku', e.target.value)}
               />
@@ -652,5 +652,13 @@ export default function ProductsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </DashboardLayout>
+  );
+}
+
+export default function ProductsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ProductsPageInner />
+    </Suspense>
   );
 }

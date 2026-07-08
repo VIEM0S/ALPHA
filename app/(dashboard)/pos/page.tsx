@@ -40,7 +40,7 @@ export default function POSPage() {
     items, addItem, removeItem, updateItemQuantity,
     clearCart, setCustomer, customer,
     getSubtotal, getTax, getTotal, getItemCount,
-    discountPercent, setDiscount, discountAmount,
+    discountPercent, setDiscount,
   } = useCartStore();
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -59,6 +59,34 @@ export default function POSPage() {
 
   const [customerSearch, setCustomerSearch] = useState('');
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+
+  // Raccourcis clavier POS
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      // F2 ou Ctrl+F → focus recherche produit
+      if (e.key === 'F2' || ((e.ctrlKey || e.metaKey) && e.key === 'f')) {
+        e.preventDefault();
+        const searchInput = document.querySelector<HTMLInputElement>('input[placeholder*="produit"]');
+        searchInput?.focus();
+      }
+      // Escape → fermer les dialogs ouverts
+      if (e.key === 'Escape') {
+        if (showPayment) { setShowPayment(false); setCheckoutError(null); }
+        if (showCustomerPicker) setShowCustomerPicker(false);
+        if (showSuccess) setShowSuccess(false);
+      }
+      // Ctrl+Entrée → valider le paiement si dialog ouvert
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && showPayment && !isProcessing) {
+        handleCheckout();
+      }
+      // Ctrl+Suppr → vider le panier
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Delete' && !showPayment) {
+        if (items.length > 0 && window.confirm('Vider le panier ?')) clearCart();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [showPayment, showCustomerPicker, showSuccess, isProcessing, items.length]);
 
   // ─── Listeners ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -98,6 +126,7 @@ export default function POSPage() {
   });
 
   const subtotal = getSubtotal();
+  const discountAmount = subtotal * (discountPercent / 100);
   const tax = getTax();
   const total = getTotal();
   const change = amountReceived ? Math.max(0, Number(amountReceived) - total) : 0;
@@ -456,18 +485,25 @@ export default function POSPage() {
                   <span>TOTAL</span><span className="text-primary-600">{formatCurrency(total)}</span>
                 </div>
               </div>
-              <div className="flex gap-2">
-                <Select value={String(discountPercent)} onValueChange={v => setDiscount(Number(v), v !== '0' ? `Remise ${v}%` : null)}>
-                  <SelectTrigger className="flex-1 h-9 text-xs border-2"><SelectValue placeholder="Remise" /></SelectTrigger>
-                  <SelectContent>
-                    {[0,5,10,15,20,25,30].map(d => <SelectItem key={d} value={String(d)}>{d === 0 ? 'Sans remise' : `${d}%`}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Button onClick={() => { setCheckoutError(null); setAmountReceived(''); setShowPayment(true); }}
-                  className="flex-1 bg-primary-600 hover:bg-primary-700 h-9 font-bold">
-                  Payer
-                </Button>
+              {/* Remise libre */}
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-xs text-gray-500 flex-shrink-0">Remise :</span>
+                {[0, 5, 10, 15, 20].map(d => (
+                  <button key={d} onClick={() => setDiscount(d, d > 0 ? `Remise ${d}%` : null)}
+                    className={`text-xs px-2 py-1 rounded-lg border transition-colors flex-shrink-0 ${discountPercent === d ? 'bg-primary-600 text-white border-primary-600' : 'border-gray-200 text-gray-600 hover:border-primary-400'}`}>
+                    {d === 0 ? 'Aucune' : `${d}%`}
+                  </button>
+                ))}
+                <div className="relative flex-1">
+                  <input type="number" min="0" max="100" placeholder="%" value={discountPercent || ''}
+                    onChange={e => { const v = Math.min(100, Math.max(0, Number(e.target.value))); setDiscount(v, v > 0 ? `Remise ${v}%` : null); }}
+                    className="w-full text-xs border-2 border-gray-200 rounded-lg px-2 py-1 text-center focus:border-primary-400 focus:outline-none" />
+                </div>
               </div>
+              <Button onClick={() => { setCheckoutError(null); setAmountReceived(''); setShowPayment(true); }}
+                className="w-full bg-primary-600 hover:bg-primary-700 h-10 font-bold text-base">
+                Payer {formatCurrency(total)}
+              </Button>
             </div>
           )}
         </div>

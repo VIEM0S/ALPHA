@@ -13,7 +13,7 @@ import {
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { formatCurrency } from '@/lib/utils/helpers';
+import { formatCurrency, toFirestoreDate } from '@/lib/utils/helpers';
 import { useAuthStore } from '@/hooks/store';
 import {
   collection, query, orderBy, onSnapshot,
@@ -29,12 +29,6 @@ interface Sale {
 interface Product { id: string; name: string; sku: string; categoryId?: string; purchasePrice: number; }
 interface Category { id: string; name: string; }
 
-function toDate(v: unknown): Date {
-  if (!v) return new Date();
-  if (typeof v === 'object' && v !== null && 'toDate' in v) return (v as { toDate: () => Date }).toDate();
-  if (typeof v === 'object' && v !== null && 'seconds' in v) return new Date((v as { seconds: number }).seconds * 1000);
-  return new Date(String(v));
-}
 
 const MONTHS_FR = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
 const COLORS = ['#2563eb','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2','#ea580c','#4f46e5'];
@@ -95,7 +89,7 @@ export default function AnalyticsPage() {
     setLoadingTop(true);
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthSales = sales.filter(s => s.status === 'COMPLETED' && toDate(s.createdAt) >= startOfMonth);
+    const monthSales = sales.filter(s => s.status === 'COMPLETED' && toFirestoreDate(s.createdAt) >= startOfMonth);
 
     if (monthSales.length === 0) { setTopProducts([]); setLoadingTop(false); return; }
 
@@ -130,7 +124,7 @@ export default function AnalyticsPage() {
     for (let i = monthsCount - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const monthSales = completedSales.filter(s => {
-        const sd = toDate(s.createdAt);
+        const sd = toFirestoreDate(s.createdAt);
         return sd.getFullYear() === d.getFullYear() && sd.getMonth() === d.getMonth();
       });
       const ca = monthSales.reduce((s, v) => s + (v.total || 0), 0);
@@ -148,7 +142,7 @@ export default function AnalyticsPage() {
     return days.map((day, i) => {
       const dayStart = new Date(startOfWeek); dayStart.setDate(startOfWeek.getDate() + i);
       const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1);
-      const daySales = completedSales.filter(s => { const d = toDate(s.createdAt); return d >= dayStart && d < dayEnd; });
+      const daySales = completedSales.filter(s => { const d = toFirestoreDate(s.createdAt); return d >= dayStart && d < dayEnd; });
       return { day, ca: daySales.reduce((s, v) => s + (v.total || 0), 0), ventes: daySales.length };
     });
   }, [completedSales]);
@@ -163,8 +157,8 @@ export default function AnalyticsPage() {
     return Object.entries(counts).map(([k, v]) => ({ name: labels[k] || k, value: Math.round(v) }));
   }, [completedSales]);
 
-  const thisMonthSales = completedSales.filter(s => { const d = toDate(s.createdAt); return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(); });
-  const lastMonthSales = completedSales.filter(s => { const d = toDate(s.createdAt); const lm = new Date(now.getFullYear(), now.getMonth()-1,1); return d.getFullYear() === lm.getFullYear() && d.getMonth() === lm.getMonth(); });
+  const thisMonthSales = completedSales.filter(s => { const d = toFirestoreDate(s.createdAt); return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(); });
+  const lastMonthSales = completedSales.filter(s => { const d = toFirestoreDate(s.createdAt); const lm = new Date(now.getFullYear(), now.getMonth()-1,1); return d.getFullYear() === lm.getFullYear() && d.getMonth() === lm.getMonth(); });
   const thisMonthCA = thisMonthSales.reduce((s, v) => s + (v.total || 0), 0);
   const lastMonthCA = lastMonthSales.reduce((s, v) => s + (v.total || 0), 0);
   const caEvolution = lastMonthCA > 0 ? ((thisMonthCA - lastMonthCA) / lastMonthCA) * 100 : 0;

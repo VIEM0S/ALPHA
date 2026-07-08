@@ -25,11 +25,13 @@ import { useRouter } from 'next/navigation';
 import type { Product, Customer } from '@/lib/types';
 
 interface QuoteItem { product: Product; quantity: number; unitPrice: number; }
+/** Structure réelle d'un article de devis stocké dans Firestore */
+interface QuoteItemStored { productId: string; productName: string; productSku: string; quantity: number; unitPrice: number; total: number; }
 interface Quote {
   id: string; tenantId: string; customerId: string; customerName: string;
   status: 'PENDING' | 'ACCEPTED' | 'CONVERTED' | 'REFUSED' | 'EXPIRED';
   dateValidite: string; total: number; note?: string;
-  items?: QuoteItem[]; userId: string; createdAt: unknown; updatedAt: unknown;
+  items?: QuoteItemStored[]; userId: string; createdAt: unknown; updatedAt: unknown;
 }
 
 const STATUS_CONFIG = {
@@ -249,7 +251,7 @@ export default function QuotesPage() {
                   <div className="space-y-2">
                     {selected.items.map((item, i) => (
                       <div key={i} className="flex justify-between text-sm bg-gray-50 rounded-lg px-3 py-2">
-                        <div><p className="font-medium">{item.product?.name || item.productName}</p>
+                        <div><p className="font-medium">{item.productName}</p>
                         <p className="text-xs text-gray-400">{item.quantity} × {formatCurrency(item.unitPrice)}</p></div>
                         <p className="font-bold">{formatCurrency(item.quantity * item.unitPrice)}</p>
                       </div>

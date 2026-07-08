@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils/helpers';
+import { formatCurrency, toFirestoreDate, formatDate, formatDateTime } from '@/lib/utils/helpers';
 import { useAuthStore } from '@/hooks/store';
 import {
   collection, query, orderBy, onSnapshot,
@@ -49,12 +49,6 @@ interface QuoteItem {
   quantity: number; unitPrice: number; total: number;
 }
 
-function toDate(v: unknown): Date {
-  if (!v) return new Date();
-  if (typeof v === 'object' && v !== null && 'toDate' in v) return (v as { toDate: () => Date }).toDate();
-  if (typeof v === 'object' && v !== null && 'seconds' in v) return new Date((v as { seconds: number }).seconds * 1000);
-  return new Date(String(v));
-}
 
 export default function InvoicesPage() {
   const { tenant } = useAuthStore();
@@ -118,7 +112,7 @@ export default function InvoicesPage() {
         collection(db, `tenants/${tenantId}/sales/${sale.id}/sale_items`)
       );
       const items: SaleItem[] = itemsSnap.docs.map(d => d.data() as SaleItem);
-      const date = toDate(sale.createdAt);
+      const date = toFirestoreDate(sale.createdAt);
 
       const invoiceData: InvoiceData = {
         ...getTenantConfig(),
@@ -157,7 +151,7 @@ export default function InvoicesPage() {
     setIsGenerating(quote.id);
     try {
       const items = quote.items || [];
-      const date = toDate(quote.createdAt);
+      const date = toFirestoreDate(quote.createdAt);
       const validite = quote.dateValidite
         ? new Date(quote.dateValidite).toLocaleDateString('fr-FR')
         : undefined;

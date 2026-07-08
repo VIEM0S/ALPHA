@@ -15,7 +15,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { formatCurrency, formatDateTime } from '@/lib/utils/helpers';
+import { formatCurrency, toFirestoreDate, formatDateTime } from '@/lib/utils/helpers';
 import { useAuthStore } from '@/hooks/store';
 import { ref, onValue, set, push, get } from 'firebase/database';
 import { rtdb } from '@/lib/firebase/client';
@@ -41,12 +41,6 @@ interface CashSession {
 
 interface Sale { id: string; total: number; paymentMethod?: string; createdAt: unknown; }
 
-function toDate(v: unknown): Date {
-  if (!v) return new Date();
-  if (typeof v === 'object' && v !== null && 'toDate' in v) return (v as { toDate: () => Date }).toDate();
-  if (typeof v === 'object' && v !== null && 'seconds' in v) return new Date((v as { seconds: number }).seconds * 1000);
-  return new Date(String(v));
-}
 
 export default function CashRegisterPage() {
   const { tenant, currentStore, user } = useAuthStore();
@@ -88,7 +82,7 @@ export default function CashRegisterPage() {
     return onSnapshot(q, snap => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Sale[];
       const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-      setTodaySales(all.filter(s => toDate(s.createdAt) >= todayStart));
+      setTodaySales(all.filter(s => toFirestoreDate(s.createdAt) >= todayStart));
     });
   }, [tenantId]);
 

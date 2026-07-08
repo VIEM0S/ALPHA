@@ -219,7 +219,7 @@ export default function SuppliersPage() {
           <div className="grid grid-cols-2 gap-4 py-2">
             <div className="col-span-2 space-y-2">
               <Label>Nom du fournisseur *</Label>
-              <Input value={form.name} onChange={e => f('name', e.target.value)} placeholder="SARL Matériaux Mali" />
+              <Input value={form.name} onChange={e => f('name', e.target.value)} placeholder="SARL Matériaux Mali" autoFocus />
             </div>
             <div className="space-y-2">
               <Label>Nom du contact</Label>
