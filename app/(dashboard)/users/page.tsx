@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import {
   Plus, User, Shield, RefreshCw, Eye, EyeOff,
-  CheckCircle2, XCircle, Crown, UserCheck, AlertCircle
+  CheckCircle2, XCircle, Crown, UserCheck, AlertCircle,
+  Pencil, Trash2
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,9 +15,14 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
+} from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDate } from '@/lib/utils/helpers';
 import { useAuthStore } from '@/hooks/store';
+import { useToast } from '@/hooks/use-toast';
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
@@ -45,9 +51,20 @@ const EMPTY_FORM: UserForm = {
   firstName: '', lastName: '', phone: '', role: 'MANAGER',
 };
 
+interface EditForm {
+  uid: string; email: string; firstName: string; lastName: string;
+  phone: string; role: 'ADMIN' | 'MANAGER' | 'CASHIER';
+  newPassword: string; confirmNewPassword: string;
+}
+const EMPTY_EDIT_FORM: EditForm = {
+  uid: '', email: '', firstName: '', lastName: '',
+  phone: '', role: 'MANAGER', newPassword: '', confirmNewPassword: '',
+};
+
 export default function UsersPage() {
   const { tenant, user: currentUser } = useAuthStore();
   const tenantId = tenant?.id;
+  const { toast } = useToast();
 
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -57,6 +74,17 @@ export default function UsersPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // ─── Édition ──────────────────────────────────────────────────────────────
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editForm, setEditForm] = useState<EditForm>(EMPTY_EDIT_FORM);
+  const [showEditPassword, setShowEditPassword] = useState(false);
+  const [isEditSaving, setIsEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // ─── Suppression ──────────────────────────────────────────────────────────
+  const [deletingUser, setDeletingUser] = useState<UserProfile | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -99,6 +127,79 @@ export default function UsersPage() {
     await updateDoc(doc(db, tenantCol(tenantId, 'users'), u.id), {
       isActive: !u.isActive, updatedAt: serverTimestamp(),
     });
+  };
+
+  const ef = (field: keyof EditForm, value: string) => setEditForm(p => ({ ...p, [field]: value }));
+
+  const handleOpenEdit = (u: UserProfile) => {
+    setEditForm({
+      uid: u.id,
+      email: u.email,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      phone: u.phone || '',
+      role: (u.role === 'OWNER' ? 'ADMIN' : u.role) as EditForm['role'],
+      newPassword: '',
+      confirmNewPassword: '',
+    });
+    setEditError(null);
+    setShowEditPassword(false);
+    setShowEditDialog(true);
+  };
+
+  const handleUpdate = async () => {
+    if (!tenantId) return;
+    if (!editForm.firstName.trim() || !editForm.lastName.trim()) { setEditError('Prénom et nom obligatoires'); return; }
+    if (!editForm.email.trim()) { setEditError('Email obligatoire'); return; }
+    if (editForm.newPassword && editForm.newPassword.length < 6) { setEditError('Nouveau mot de passe : 6 caractères minimum'); return; }
+    if (editForm.newPassword && editForm.newPassword !== editForm.confirmNewPassword) { setEditError('Les mots de passe ne correspondent pas'); return; }
+
+    setIsEditSaving(true); setEditError(null);
+    try {
+      const res = await fetch('/api/users/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId,
+          uid: editForm.uid,
+          email: editForm.email,
+          firstName: editForm.firstName,
+          lastName: editForm.lastName,
+          phone: editForm.phone,
+          role: editForm.role,
+          newPassword: editForm.newPassword || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de la modification');
+      setShowEditDialog(false);
+      setEditForm(EMPTY_EDIT_FORM);
+      toast({ title: 'Utilisateur modifié', description: `${editForm.firstName} ${editForm.lastName} a été mis à jour.` });
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : 'Erreur interne');
+    } finally { setIsEditSaving(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!tenantId || !deletingUser) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch('/api/users/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId, uid: deletingUser.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de la suppression');
+      toast({ title: 'Utilisateur supprimé', description: `${deletingUser.firstName} ${deletingUser.lastName} a été retiré du compte.` });
+      setDeletingUser(null);
+    } catch (e) {
+      toast({
+        title: 'Erreur',
+        description: e instanceof Error ? e.message : 'Erreur interne',
+        variant: 'destructive',
+      });
+    } finally { setIsDeleting(false); }
   };
 
   const isOwnerOrAdmin = ['OWNER', 'ADMIN'].includes(currentUser?.role || '');
@@ -167,7 +268,7 @@ export default function UsersPage() {
                     <TableHead>Rôle</TableHead>
                     <TableHead>Dernière connexion</TableHead>
                     <TableHead className="text-center">Statut</TableHead>
-                    {isOwnerOrAdmin && <TableHead className="w-24" />}
+                    {isOwnerOrAdmin && <TableHead className="w-36 text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -195,9 +296,21 @@ export default function UsersPage() {
                       </TableCell>
                       {isOwnerOrAdmin && (
                         <TableCell>
-                          {u.role !== 'OWNER' && u.id !== currentUser?.id && (
-                            <Switch checked={u.isActive} onCheckedChange={() => toggleActive(u)} />
-                          )}
+                          <div className="flex items-center justify-end gap-1">
+                            {u.role !== 'OWNER' && u.id !== currentUser?.id && (
+                              <Switch checked={u.isActive} onCheckedChange={() => toggleActive(u)} />
+                            )}
+                            {u.role !== 'OWNER' && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenEdit(u)}>
+                                <Pencil className="h-4 w-4 text-gray-500" />
+                              </Button>
+                            )}
+                            {u.role !== 'OWNER' && u.id !== currentUser?.id && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setDeletingUser(u)}>
+                                <Trash2 className="h-4 w-4 text-red-500" />
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       )}
                     </TableRow>
@@ -298,6 +411,98 @@ export default function UsersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dialog Modification */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Modifier l'utilisateur</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4 py-2">
+            {editError && (
+              <div className="col-span-2 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />{editError}
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label>Prénom *</Label>
+              <Input value={editForm.firstName} onChange={e => ef('firstName', e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Nom *</Label>
+              <Input value={editForm.lastName} onChange={e => ef('lastName', e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Email *</Label>
+              <Input type="email" value={editForm.email} onChange={e => ef('email', e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Téléphone</Label>
+              <Input value={editForm.phone} onChange={e => ef('phone', e.target.value)} placeholder="+223 ..." />
+            </div>
+            <div className="col-span-2 space-y-1.5">
+              <Label>Rôle</Label>
+              <Select value={editForm.role} onValueChange={v => ef('role', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ADMIN">Administrateur</SelectItem>
+                  <SelectItem value="MANAGER">Responsable</SelectItem>
+                  <SelectItem value="CASHIER">Caissier</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-400">Ex. : promouvoir un Caissier en Responsable, ou l'inverse.</p>
+            </div>
+            <div className="col-span-2 border-t pt-3 mt-1">
+              <p className="text-sm font-medium text-gray-700 mb-2">Réinitialiser le mot de passe (optionnel)</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Nouveau mot de passe</Label>
+              <div className="relative">
+                <Input type={showEditPassword ? 'text' : 'password'} value={editForm.newPassword}
+                  onChange={e => ef('newPassword', e.target.value)} placeholder="Laisser vide pour ne pas changer" />
+                <button type="button" onClick={() => setShowEditPassword(s => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
+                  {showEditPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Confirmer</Label>
+              <Input type="password" value={editForm.confirmNewPassword}
+                onChange={e => ef('confirmNewPassword', e.target.value)} placeholder="••••••••" />
+              {editForm.newPassword && editForm.confirmNewPassword && editForm.newPassword !== editForm.confirmNewPassword && (
+                <p className="text-xs text-red-500">Les mots de passe ne correspondent pas</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)} disabled={isEditSaving}>Annuler</Button>
+            <Button onClick={handleUpdate} disabled={isEditSaving} className="bg-primary-600 hover:bg-primary-700">
+              {isEditSaving ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Enregistrement...</> : 'Enregistrer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmation Suppression */}
+      <AlertDialog open={!!deletingUser} onOpenChange={(open) => !open && setDeletingUser(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Supprimer cet utilisateur ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingUser && (
+                <>Le compte de <strong>{deletingUser.firstName} {deletingUser.lastName}</strong> ({deletingUser.email}) sera définitivement supprimé — accès et connexion révoqués immédiatement. Cette action est irréversible.</>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-red-600 hover:bg-red-700">
+              {isDeleting ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Suppression...</> : 'Supprimer définitivement'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 }

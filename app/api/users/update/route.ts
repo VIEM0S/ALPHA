@@ -1,0 +1,84 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { adminAuth, adminDb } from '@/lib/firebase/admin';
+import { cookies } from 'next/headers';
+
+export async function POST(request: NextRequest) {
+  try {
+    // Vérifier session
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('__session')?.value;
+    if (!sessionCookie) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+
+    const decoded = await adminAuth.verifySessionCookie(sessionCookie, true);
+    const callerRole = decoded.role as string;
+    const callerTenantId = decoded.tenantId as string;
+    if (!['OWNER', 'ADMIN'].includes(callerRole)) {
+      return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
+    }
+
+    const { tenantId, uid, email, firstName, lastName, phone, role, newPassword } = await request.json();
+    if (!tenantId || !uid) {
+      return NextResponse.json({ error: 'Champs manquants' }, { status: 400 });
+    }
+    if (tenantId !== callerTenantId) {
+      return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
+    }
+
+    const userRef = adminDb.doc(`tenants/${tenantId}/users/${uid}`);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists) {
+      return NextResponse.json({ error: 'Utilisateur introuvable' }, { status: 404 });
+    }
+    const existing = userSnap.data() as { role?: string };
+
+    // On ne modifie jamais le compte OWNER via cette route
+    if (existing?.role === 'OWNER') {
+      return NextResponse.json({ error: "Impossible de modifier le Propriétaire" }, { status: 403 });
+    }
+    if (role && !['ADMIN', 'MANAGER', 'CASHIER'].includes(role)) {
+      return NextResponse.json({ error: 'Rôle invalide' }, { status: 400 });
+    }
+    if (newPassword && newPassword.length < 6) {
+      return NextResponse.json({ error: 'Mot de passe : 6 caractères minimum' }, { status: 400 });
+    }
+
+    // 1. Mettre à jour Firebase Auth (email, mot de passe, nom affiché)
+    const authUpdate: { email?: string; password?: string; displayName?: string } = {};
+    if (email) authUpdate.email = email;
+    if (newPassword) authUpdate.password = newPassword;
+    if (firstName || lastName) {
+      authUpdate.displayName = `${firstName ?? ''} ${lastName ?? ''}`.trim();
+    }
+    if (Object.keys(authUpdate).length > 0) {
+      try {
+        await adminAuth.updateUser(uid, authUpdate);
+      } catch (e: unknown) {
+        const code = (e as { code?: string }).code;
+        if (code === 'auth/email-already-exists') {
+          return NextResponse.json({ error: 'Cet email est déjà utilisé' }, { status: 409 });
+        }
+        throw e;
+      }
+    }
+
+    // 2. Mettre à jour les custom claims si le rôle change
+    if (role && role !== existing?.role) {
+      await adminAuth.setCustomUserClaims(uid, { tenantId, role });
+    }
+
+    // 3. Mettre à jour le profil Firestore
+    const firestoreUpdate: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    if (firstName) firestoreUpdate.firstName = firstName;
+    if (lastName) firestoreUpdate.lastName = lastName;
+    if (email) firestoreUpdate.email = email;
+    if (phone !== undefined) firestoreUpdate.phone = phone || null;
+    if (role) firestoreUpdate.role = role;
+
+    await userRef.update(firestoreUpdate);
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Update user error:', error);
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+  }
+}
