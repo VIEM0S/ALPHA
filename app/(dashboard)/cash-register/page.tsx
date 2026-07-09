@@ -130,42 +130,32 @@ export default function CashRegisterPage() {
   };
 
   // ─── Fermer la caisse ───────────────────────────────────────────────────
+  const [closeError, setCloseError] = useState<string | null>(null);
   const handleClose = async () => {
     if (!tenantId || !registerId || !user || !session) return;
     const counted = Number(closingAmount) || 0;
-    const difference = counted - expectedBalance;
     setIsSaving(true);
+    setCloseError(null);
     try {
-      const closedSession: CashSession = {
-        ...session,
-        status: 'CLOSED',
-        closedAt: Date.now(),
-        closingBalance: counted,
-        expectedBalance,
-        difference,
-        notes: closeNotes || undefined,
-      };
-
-      // Archiver dans Firestore
-      const { addDoc, collection: fsCollection, serverTimestamp } = await import('firebase/firestore');
-      await addDoc(fsCollection(db, tenantCol(tenantId, 'cash_sessions')), {
-        tenantId, storeId, registerId,
-        openedBy: session.openedBy,
-        openedByName: session.openedByName,
-        openedAt: session.openedAt,
-        openingBalance: session.openingBalance,
-        closedBy: user.id,
-        closedByName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-        closedAt: closedSession.closedAt,
-        closingBalance: counted,
-        expectedBalance,
-        difference,
-        salesCount: txCount,
-        salesTotal: totalToday,
-        cashSalesTotal: cashTotal,
-        notes: closeNotes || null,
-        createdAt: serverTimestamp(),
+      // La différence est recalculée côté serveur à partir des vraies ventes
+      // Firestore — on ne fait plus confiance au total calculé côté client,
+      // ce qui empêche un caissier de masquer un manque de caisse.
+      const res = await fetch('/api/cash-register/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId, storeId, registerId,
+          openedBy: session.openedBy,
+          openedByName: session.openedByName,
+          openedAt: session.openedAt,
+          openingBalance: session.openingBalance,
+          countedAmount: counted,
+          notes: closeNotes || null,
+          closedByName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+        }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de la clôture');
 
       // Réinitialiser RTDB
       const path = RTDB_PATHS.cashRegister(tenantId, registerId);
@@ -176,6 +166,7 @@ export default function CashRegisterPage() {
       setCloseNotes('');
     } catch (e) {
       console.error(e);
+      setCloseError(e instanceof Error ? e.message : 'Erreur lors de la clôture de la caisse');
     } finally {
       setIsSaving(false);
     }
@@ -373,6 +364,11 @@ export default function CashRegisterPage() {
               <Label>Notes (optionnel)</Label>
               <Textarea placeholder="Remarques sur la fermeture..." value={closeNotes} onChange={e => setCloseNotes(e.target.value)} rows={2} />
             </div>
+            {closeError && (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />{closeError}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowClose(false)}>Annuler</Button>

@@ -38,9 +38,19 @@ service cloud.firestore {
       // ─── Users ─────────────────────────────────────────────────────────────
       match /users/{userId} {
         allow read: if belongsToTenant(tenantId);
-        // Chaque utilisateur peut mettre à jour son propre profil
+        // Chaque utilisateur peut mettre à jour son propre profil,
+        // mais jamais son propre rôle ou son propre statut actif/inactif —
+        // ces deux champs ne peuvent être changés que par un OWNER/ADMIN
+        // (vérifié via le claim du token, pas via le document lui-même).
         allow update: if belongsToTenant(tenantId) &&
-          (request.auth.uid == userId || isOwnerOrAdmin());
+          (
+            isOwnerOrAdmin() ||
+            (
+              request.auth.uid == userId &&
+              request.resource.data.role == resource.data.role &&
+              request.resource.data.isActive == resource.data.isActive
+            )
+          );
         allow create, delete: if belongsToTenant(tenantId) && isOwnerOrAdmin();
       }
 
@@ -148,9 +158,11 @@ service cloud.firestore {
 
       match /cash_sessions/{sessionId} {
         allow read: if belongsToTenant(tenantId);
-        allow create: if belongsToTenant(tenantId);
-        allow update: if belongsToTenant(tenantId) && isManager();
-        allow delete: if false;
+        // La clôture de caisse passe désormais uniquement par la route serveur
+        // /api/cash-register/close (Admin SDK), qui recalcule les totaux à
+        // partir des vraies ventes Firestore. Écriture directe interdite pour
+        // empêcher un caissier de trafiquer l'écart de caisse.
+        allow create, update, delete: if false;
       }
 
       // ─── Invoices ──────────────────────────────────────────────────────────

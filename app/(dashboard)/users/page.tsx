@@ -23,7 +23,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatDate } from '@/lib/utils/helpers';
 import { useAuthStore } from '@/hooks/store';
 import { useToast } from '@/hooks/use-toast';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
 
@@ -123,10 +123,28 @@ export default function UsersPage() {
   };
 
   const toggleActive = async (u: UserProfile) => {
-    if (!tenantId || u.role === 'OWNER') return;
-    await updateDoc(doc(db, tenantCol(tenantId, 'users'), u.id), {
-      isActive: !u.isActive, updatedAt: serverTimestamp(),
-    });
+    if (!tenantId || u.role === 'OWNER' || u.id === currentUser?.id) return;
+    try {
+      const res = await fetch('/api/users/toggle-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId, uid: u.id, isActive: !u.isActive }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur');
+      toast({
+        title: !u.isActive ? 'Utilisateur activé' : 'Utilisateur désactivé',
+        description: !u.isActive
+          ? `${u.firstName} ${u.lastName} peut à nouveau se connecter.`
+          : `${u.firstName} ${u.lastName} est désactivé et son accès a été révoqué immédiatement.`,
+      });
+    } catch (e) {
+      toast({
+        title: 'Erreur',
+        description: e instanceof Error ? e.message : 'Erreur interne',
+        variant: 'destructive',
+      });
+    }
   };
 
   const ef = (field: keyof EditForm, value: string) => setEditForm(p => ({ ...p, [field]: value }));
