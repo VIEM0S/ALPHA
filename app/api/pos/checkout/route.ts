@@ -112,11 +112,19 @@ export async function POST(request: NextRequest) {
 
     // ── Transaction atomique : vérifie + décrémente le stock, crée la vente ─
     await adminDb.runTransaction(async (tx) => {
+      // ── Toutes les lectures d'abord (obligatoire dans une transaction) ────
+      const freshQtys: Record<string, number> = {};
       for (const l of lines) {
         const inv = invRefs[l.product.id];
         if (!inv) continue;
         const fresh = await tx.get(inv.ref);
-        const freshQty = fresh.data()?.quantity || 0;
+        freshQtys[l.product.id] = fresh.data()?.quantity || 0;
+      }
+      // ── Puis toutes les écritures ──────────────────────────────────────────
+      for (const l of lines) {
+        const inv = invRefs[l.product.id];
+        if (!inv) continue;
+        const freshQty = freshQtys[l.product.id];
         if (freshQty < l.quantity) {
           throw new Error(`Stock insuffisant pour "${l.product.name}" (${freshQty} disponible, ${l.quantity} demandé)`);
         }
