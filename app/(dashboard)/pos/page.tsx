@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import {
   Search, ShoppingCart, Trash2, Plus, Minus,
   User, X, CheckCircle2, RefreshCw, Package,
-  CreditCard, Banknote, Smartphone, AlertTriangle
+  CreditCard, Banknote, Smartphone, AlertTriangle,
+  WifiOff, Wifi, CloudUpload
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,6 +23,9 @@ import {
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
 import type { Product, Customer } from '@/lib/types';
+import {
+  enqueueSale, getQueue, syncOfflineQueue, type QueuedSale,
+} from '@/lib/offline-queue';
 
 const PAYMENT_METHODS = [
   { value: 'CASH', label: 'Espèces', icon: Banknote },
@@ -58,6 +62,52 @@ export default function POSPage() {
 
   const [customerSearch, setCustomerSearch] = useState('');
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+
+  // ─── Mode hors-ligne ───────────────────────────────────────────────────
+  const [isOnline, setIsOnline] = useState(true);
+  const [pendingQueue, setPendingQueue] = useState<QueuedSale[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [wasOfflineSale, setWasOfflineSale] = useState(false);
+
+  const refreshQueue = () => setPendingQueue(getQueue());
+
+  const runSync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await syncOfflineQueue();
+    } finally {
+      refreshQueue();
+      setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshQueue();
+    setIsOnline(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+    const handleOnline = () => { setIsOnline(true); runSync(); };
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Nouvelle tentative périodique — utile si le navigateur ne détecte pas
+    // toujours fidèlement le retour de connexion (fréquent en 3G/4G instable)
+    const interval = setInterval(() => {
+      if (navigator.onLine) runSync();
+    }, 30000);
+
+    // Tentative de sync au chargement de la page, au cas où des ventes
+    // seraient restées en attente d'une session précédente
+    if (typeof navigator !== 'undefined' && navigator.onLine) runSync();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Raccourcis clavier POS
   useEffect(() => {
@@ -160,32 +210,54 @@ export default function POSPage() {
     setIsProcessing(true);
     setCheckoutError(null);
 
+    const checkoutPayload = {
+      tenantId, storeId,
+      items: items.map(i => ({ productId: i.product.id, quantity: i.quantity, discount: i.discount })),
+      customerId: customer?.id || null,
+      paymentMethod,
+      amountReceived: Number(amountReceived) || undefined,
+      discountPercent,
+      userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+    };
+
     try {
       const res = await fetch('/api/pos/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId, storeId,
-          items: items.map(i => ({ productId: i.product.id, quantity: i.quantity, discount: i.discount })),
-          customerId: customer?.id || null,
-          paymentMethod,
-          amountReceived: Number(amountReceived) || undefined,
-          discountPercent,
-          userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-        }),
+        body: JSON.stringify(checkoutPayload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erreur lors de la finalisation');
 
       setLastSaleId(data.saleId);
+      setWasOfflineSale(false);
       clearCart();
       setAmountReceived('');
       setShowPayment(false);
       setShowSuccess(true);
 
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Erreur lors de la finalisation';
-      setCheckoutError(msg);
+      // Une requête qui n'atteint même pas le serveur (pas de réseau) lève
+      // une TypeError ("Failed to fetch") plutôt qu'une réponse HTTP — c'est
+      // ce qui distingue "pas de connexion" d'une vraie erreur métier
+      // (stock insuffisant, etc.), qu'on ne veut surtout pas mettre en file
+      // d'attente silencieusement.
+      const isNetworkFailure = e instanceof TypeError || (typeof navigator !== 'undefined' && !navigator.onLine);
+
+      if (isNetworkFailure) {
+        enqueueSale(checkoutPayload, total);
+        refreshQueue();
+        setIsOnline(false);
+        setLastSaleId(null);
+        setWasOfflineSale(true);
+        clearCart();
+        setAmountReceived('');
+        setShowPayment(false);
+        setShowSuccess(true);
+      } else {
+        const msg = e instanceof Error ? e.message : 'Erreur lors de la finalisation';
+        setCheckoutError(msg);
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -200,6 +272,27 @@ export default function POSPage() {
 
         {/* ── Catalogue ── */}
         <div className="flex-1 flex flex-col gap-3 min-w-0">
+          {(!isOnline || pendingQueue.length > 0) && (
+            <div className={`flex items-center justify-between gap-2 rounded-lg px-4 py-2.5 text-sm ${
+              !isOnline ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-blue-50 border border-blue-200 text-blue-800'
+            }`}>
+              <div className="flex items-center gap-2">
+                {!isOnline ? <WifiOff className="h-4 w-4 flex-shrink-0" /> : <Wifi className="h-4 w-4 flex-shrink-0" />}
+                <span>
+                  {!isOnline
+                    ? 'Hors connexion — les ventes sont enregistrées localement et se synchroniseront au retour du réseau.'
+                    : `${pendingQueue.length} vente${pendingQueue.length > 1 ? 's' : ''} en attente de synchronisation.`}
+                </span>
+              </div>
+              {isOnline && pendingQueue.length > 0 && (
+                <Button size="sm" variant="outline" onClick={runSync} disabled={isSyncing} className="h-7 text-xs">
+                  {isSyncing ? <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> : <CloudUpload className="h-3 w-3 mr-1" />}
+                  Synchroniser
+                </Button>
+              )}
+            </div>
+          )}
+
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input placeholder="Rechercher un produit ou scanner un code-barres..."
@@ -505,11 +598,21 @@ export default function POSPage() {
       <Dialog open={showSuccess} onOpenChange={o => { if (!o) setShowSuccess(false); }}>
         <DialogContent className="max-w-sm text-center">
           <div className="py-6">
-            <div className="h-20 w-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle2 className="h-10 w-10 text-green-600" />
+            <div className={`h-20 w-20 rounded-full flex items-center justify-center mx-auto mb-4 ${wasOfflineSale ? 'bg-amber-100' : 'bg-green-100'}`}>
+              {wasOfflineSale
+                ? <WifiOff className="h-10 w-10 text-amber-600" />
+                : <CheckCircle2 className="h-10 w-10 text-green-600" />}
             </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">Vente enregistrée !</h3>
-            {lastSaleId && <p className="text-sm text-gray-500 font-mono">N° {lastSaleId.slice(0, 8).toUpperCase()}</p>}
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">
+              {wasOfflineSale ? 'Vente enregistrée hors-ligne' : 'Vente enregistrée !'}
+            </h3>
+            {wasOfflineSale ? (
+              <p className="text-sm text-gray-500 px-2">
+                Le reçu peut être imprimé normalement. Elle sera confirmée dans le système dès le retour de la connexion.
+              </p>
+            ) : (
+              lastSaleId && <p className="text-sm text-gray-500 font-mono">N° {lastSaleId.slice(0, 8).toUpperCase()}</p>
+            )}
             <Button onClick={() => setShowSuccess(false)} className="mt-6 w-full bg-primary-600 hover:bg-primary-700 h-12 text-lg font-bold">
               Nouvelle vente
             </Button>
