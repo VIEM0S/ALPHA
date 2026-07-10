@@ -138,7 +138,10 @@ export async function POST(request: NextRequest) {
 
     // ── Sous-collections (hors transaction) ──────────────────────────────────
     const batchWrites: Promise<unknown>[] = [];
+    let saleCostTotal = 0;
     for (const l of lines) {
+      const lineCostTotal = l.quantity * l.product.purchasePrice;
+      saleCostTotal += lineCostTotal;
       batchWrites.push(
         adminDb.collection(`tenants/${tenantId}/sales/${saleRef.id}/sale_items`).add({
           productId: l.product.id,
@@ -149,8 +152,9 @@ export async function POST(request: NextRequest) {
           discount: l.discount,
           tax: l.tax,
           total: l.lineTotal,
-          costPrice: l.product.purchasePrice,
-          costTotal: l.quantity * l.product.purchasePrice,
+          // Le coût d'achat n'est PAS stocké ici : ce document est lisible par
+          // tous les rôles (reçus, historique des ventes). Il vit séparément
+          // dans cost_summary, réservé aux Managers+.
         })
       );
       const inv = invRefs[l.product.id];
@@ -172,6 +176,15 @@ export async function POST(request: NextRequest) {
       adminDb.collection(`tenants/${tenantId}/sales/${saleRef.id}/payments`).add({
         method: paymentMethod, amount: total,
         amountReceived: receivedCash, change,
+        createdAt: FieldValue.serverTimestamp(),
+      })
+    );
+    // Coût réel de la vente, réservé aux Managers+ (voir firestore.rules)
+    batchWrites.push(
+      adminDb.doc(`tenants/${tenantId}/sales/${saleRef.id}/cost_summary/data`).set({
+        tenantId,
+        costTotal: saleCostTotal,
+        margin: total - saleCostTotal,
         createdAt: FieldValue.serverTimestamp(),
       })
     );

@@ -121,6 +121,13 @@ service cloud.firestore {
           allow read: if belongsToTenant(tenantId);
           allow create, update, delete: if false;
         }
+
+        // Coût réel / marge — réservé aux Managers+, jamais lisible par un
+        // Caissier (contrairement à sale_items, lu par tous pour les reçus).
+        match /cost_summary/{docId} {
+          allow read: if belongsToTenant(tenantId) && isManager();
+          allow write: if false;
+        }
       }
 
       // ─── Credits ───────────────────────────────────────────────────────────

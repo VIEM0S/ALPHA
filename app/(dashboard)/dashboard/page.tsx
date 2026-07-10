@@ -13,8 +13,8 @@ import { Badge } from '@/components/ui/badge';
 import { formatCurrency, formatRelativeTime } from '@/lib/utils/helpers';
 import { useAuthStore } from '@/hooks/store';
 import {
-  collection, query, orderBy, onSnapshot,
-  where, limit, getDocs
+  collection, collectionGroup, query, orderBy, onSnapshot,
+  where, limit, getDocs, Timestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
@@ -35,12 +35,13 @@ interface Category { id: string; name: string; }
 
 // ─── Hook données dashboard ───────────────────────────────────────────────────
 
-function useDashboardData(tenantId: string | undefined) {
+function useDashboardData(tenantId: string | undefined, isManagerPlus: boolean) {
   const [sales, setSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [credits, setCredits] = useState<Credit[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [monthlyCostTotal, setMonthlyCostTotal] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -72,7 +73,30 @@ function useDashboardData(tenantId: string | undefined) {
     return () => { unsubS(); unsubP(); unsubI(); unsubC(); unsubCat(); };
   }, [tenantId]);
 
-  return { sales, products, inventory, credits, categories, isLoading };
+  // Coût/marge réel — réservé aux Managers+ (voir firestore.rules cost_summary).
+  // Un Caissier n'a pas les droits de lecture sur cette collection : on ne
+  // lance même pas la requête pour lui, pour ne pas déclencher d'erreur de
+  // permission inutile et pour qu'aucune donnée de coût n'atteigne jamais
+  // son navigateur.
+  useEffect(() => {
+    if (!tenantId || !isManagerPlus) { setMonthlyCostTotal(null); return; }
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const unsub = onSnapshot(
+      query(
+        collectionGroup(db, 'cost_summary'),
+        where('tenantId', '==', tenantId),
+        where('createdAt', '>=', Timestamp.fromDate(startOfMonth))
+      ),
+      snap => {
+        const total = snap.docs.reduce((s, d) => s + (d.data().costTotal || 0), 0);
+        setMonthlyCostTotal(total);
+      },
+      () => setMonthlyCostTotal(null)
+    );
+    return () => unsub();
+  }, [tenantId, isManagerPlus]);
+
+  return { sales, products, inventory, credits, categories, monthlyCostTotal, isLoading };
 }
 
 // ─── Calculs ──────────────────────────────────────────────────────────────────
@@ -87,10 +111,11 @@ function getDateStr(daysAgo = 0): string {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const { tenant, currentStore } = useAuthStore();
+  const { tenant, currentStore, user } = useAuthStore();
   const tenantId = tenant?.id;
   const storeId = currentStore?.id;
-  const { sales, products, inventory, credits, categories, isLoading } = useDashboardData(tenantId);
+  const isManagerPlus = ['OWNER', 'ADMIN', 'MANAGER'].includes(user?.role || '');
+  const { sales, products, inventory, credits, categories, monthlyCostTotal, isLoading } = useDashboardData(tenantId, isManagerPlus);
 
   // ─── Calculs stats ──────────────────────────────────────────────────────────
 
@@ -123,17 +148,19 @@ export default function DashboardPage() {
   const monthlyRevenue = sum(monthSales);
   const todayChange = yesterdayRevenue > 0 ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 : 0;
 
-  // Marge mensuelle — uniquement sur les ventes ayant un costTotal réel
-  const salesWithCost = monthSales.filter(s => s.costTotal && s.costTotal > 0);
-  const monthlyProfit = salesWithCost.length > 0
-    ? salesWithCost.reduce((a, s) => a + ((s.total || 0) - (s.costTotal || 0)), 0)
-    : null; // null = pas de données de coût disponibles
+  // Marge mensuelle — calculée côté serveur (cost_summary), réservée aux Managers+
+  const monthlyProfit = isManagerPlus && monthlyCostTotal !== null
+    ? monthlyRevenue - monthlyCostTotal
+    : null;
 
   // Stock
   const getStock = (pId: string) => inventory.find(i => i.productId === pId && i.storeId === storeId)?.quantity ?? 0;
   const lowStockProducts = products.filter(p => p.trackInventory && getStock(p.id) <= p.alertThreshold);
   const ruptureProducts = products.filter(p => p.trackInventory && getStock(p.id) === 0);
-  const valeurStock = products.reduce((s, p) => s + getStock(p.id) * p.purchasePrice, 0);
+  // Valeur du stock au prix d'achat — donnée sensible, réservée aux Managers+
+  const valeurStock = isManagerPlus
+    ? products.reduce((s, p) => s + getStock(p.id) * p.purchasePrice, 0)
+    : null;
 
   // Crédits
   const activeCredits = credits.filter(c => ['PENDING', 'PARTIALLY_PAID', 'OVERDUE'].includes(c.status));
@@ -204,10 +231,12 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-sm text-gray-500">CA du mois</p>
                   <p className="text-2xl font-bold text-gray-900">{formatCurrency(monthlyRevenue)}</p>
-                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                    <TrendingUp className="h-3 w-3" />
-                    {monthlyProfit !== null ? `Marge : ${formatCurrency(monthlyProfit)}` : 'Marge : données insuffisantes'}
-                  </p>
+                  {isManagerPlus && (
+                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                      <TrendingUp className="h-3 w-3" />
+                      {monthlyProfit !== null ? `Marge : ${formatCurrency(monthlyProfit)}` : 'Marge : chargement...'}
+                    </p>
+                  )}
                 </div>
                 <div className="h-12 w-12 rounded-xl bg-green-100 flex items-center justify-center">
                   <TrendingUp className="h-6 w-6 text-green-600" />
@@ -221,8 +250,12 @@ export default function DashboardPage() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500">Valeur du stock</p>
-                  <p className="text-2xl font-bold text-gray-900">{formatCurrency(valeurStock)}</p>
+                  <p className="text-sm text-gray-500">{isManagerPlus ? 'Valeur du stock' : 'État du stock'}</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {isManagerPlus
+                      ? formatCurrency(valeurStock || 0)
+                      : (ruptureProducts.length > 0 || lowStockProducts.length > 0 ? 'À surveiller' : 'OK')}
+                  </p>
                   <div className="flex items-center gap-2 mt-1">
                     {ruptureProducts.length > 0 && (
                       <span className="text-xs text-red-600 flex items-center gap-0.5">
