@@ -105,21 +105,21 @@ service cloud.firestore {
       // ─── Sales ─────────────────────────────────────────────────────────────
       match /sales/{saleId} {
         allow read: if belongsToTenant(tenantId);
-        allow create: if belongsToTenant(tenantId);
+        // Créées uniquement par /api/pos/checkout (Admin SDK) — le serveur
+        // recalcule les prix et le coût réel, jamais depuis le client.
+        allow create: if false;
         // Annulation uniquement par Manager+
         allow update: if belongsToTenant(tenantId) && isManager();
         allow delete: if false;
 
         match /sale_items/{itemId} {
           allow read: if belongsToTenant(tenantId);
-          allow create: if belongsToTenant(tenantId);
-          allow update, delete: if false;
+          allow create, update, delete: if false;
         }
 
         match /payments/{paymentId} {
           allow read: if belongsToTenant(tenantId);
-          allow create: if belongsToTenant(tenantId);
-          allow update, delete: if false;
+          allow create, update, delete: if false;
         }
       }
 

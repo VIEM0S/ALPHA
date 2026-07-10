@@ -17,8 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { formatCurrency } from '@/lib/utils/helpers';
 import { useAuthStore, useCartStore } from '@/hooks/store';
 import {
-  collection, query, where, orderBy, onSnapshot,
-  addDoc, serverTimestamp, getDocs, runTransaction, doc
+  collection, query, where, orderBy, onSnapshot
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
@@ -146,7 +145,7 @@ export default function POSPage() {
     addItem(p);
   };
 
-  // ─── Checkout atomique avec runTransaction ───────────────────────────────
+  // ─── Checkout via l'API serveur (prix/coût recalculés côté serveur) ───────
   const handleCheckout = async () => {
     if (!tenantId || !storeId || !user || items.length === 0) return;
     if (paymentMethod === 'CREDIT' && !customer) {
@@ -161,159 +160,24 @@ export default function POSPage() {
     setIsProcessing(true);
     setCheckoutError(null);
 
-    const customerName = customer
-      ? (customer.customerType === 'BUSINESS'
-          ? customer.companyName
-          : `${customer.firstName || ''} ${customer.lastName || ''}`.trim())
-      : null;
-
     try {
-      // ── Étape 1 : vérifier + décrémenter le stock atomiquement ──────────
-      const invDocs: Record<string, { ref: ReturnType<typeof doc>; qty: number }> = {};
-
-      for (const item of items) {
-        if (!item.product.trackInventory) continue;
-        const invSnap = await getDocs(
-          query(collection(db, tenantCol(tenantId, 'inventory')),
-            where('productId', '==', item.product.id),
-            where('storeId', '==', storeId))
-        );
-        if (invSnap.empty) continue;
-        invDocs[item.product.id] = {
-          ref: invSnap.docs[0].ref,
-          qty: invSnap.docs[0].data().quantity || 0,
-        };
-      }
-
-      // Vérifier que le stock est suffisant
-      for (const item of items) {
-        if (!item.product.trackInventory) continue;
-        const inv = invDocs[item.product.id];
-        if (inv && inv.qty < item.quantity) {
-          throw new Error(`Stock insuffisant pour "${item.product.name}" (${inv.qty} disponible, ${item.quantity} demandé)`);
-        }
-      }
-
-      // ── Étape 2 : transaction atomique Firestore ──────────────────────────
-      const saleRef = doc(collection(db, tenantCol(tenantId, 'sales')));
-
-      await runTransaction(db, async (transaction) => {
-        // Vérifier à nouveau le stock dans la transaction (évite les race conditions)
-        for (const item of items) {
-          if (!item.product.trackInventory) continue;
-          const inv = invDocs[item.product.id];
-          if (!inv) continue;
-          const fresh = await transaction.get(inv.ref);
-          const freshQty = fresh.data()?.quantity || 0;
-          if (freshQty < item.quantity) {
-            throw new Error(`Stock insuffisant pour "${item.product.name}" (${freshQty} disponible)`);
-          }
-          // Décrémenter le stock
-          transaction.update(inv.ref, {
-            quantity: freshQty - item.quantity,
-            updatedAt: serverTimestamp(),
-          });
-        }
-
-        // Créer la vente
-        transaction.set(saleRef, {
-          tenantId, storeId, userId: user.id,
+      const res = await fetch('/api/pos/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId, storeId,
+          items: items.map(i => ({ productId: i.product.id, quantity: i.quantity, discount: i.discount })),
           customerId: customer?.id || null,
-          customerName,
-          subtotal, discountPercent, discountAmount, tax, total,
-          status: 'COMPLETED',
           paymentMethod,
-          acompte,
-          soldeCredit,
-          amountReceived: paymentMethod === 'CASH' ? Number(amountReceived) || total : acompte,
-          change: paymentMethod === 'CASH' ? change : 0,
-          itemCount: getItemCount(),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      });
-
-      // ── Étape 3 : écriture des sous-collections (hors transaction) ────────
-      await Promise.all([
-        // Articles de la vente
-        ...items.map(item =>
-          addDoc(collection(db, `tenants/${tenantId}/sales/${saleRef.id}/sale_items`), {
-            productId: item.product.id,
-            productName: item.product.name,
-            productSku: item.product.sku,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            discount: item.discount,
-            tax: item.tax,
-            total: item.total,
-            costPrice: item.product.purchasePrice,
-            costTotal: item.quantity * item.product.purchasePrice,
-          })
-        ),
-        // Paiement
-        addDoc(collection(db, `tenants/${tenantId}/sales/${saleRef.id}/payments`), {
-          method: paymentMethod, amount: total,
-          amountReceived: paymentMethod === 'CASH' ? Number(amountReceived) || total : acompte,
-          change: paymentMethod === 'CASH' ? change : 0,
-          createdAt: serverTimestamp(),
+          amountReceived: Number(amountReceived) || undefined,
+          discountPercent,
+          userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
         }),
-        // Mouvements de stock
-        ...items
-          .filter(item => item.product.trackInventory && invDocs[item.product.id])
-          .map(item => {
-            const inv = invDocs[item.product.id];
-            return addDoc(collection(db, tenantCol(tenantId, 'inventory_movements')), {
-              tenantId, productId: item.product.id, storeId,
-              type: 'SALE', quantity: -item.quantity,
-              previousQuantity: inv.qty,
-              newQuantity: inv.qty - item.quantity,
-              saleId: saleRef.id,
-              reason: 'Vente POS',
-              createdAt: serverTimestamp(),
-            });
-          }),
-      ]);
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de la finalisation');
 
-      // ── Étape 4 : crédit si paiement crédit ──────────────────────────────
-      if (paymentMethod === 'CREDIT' && soldeCredit > 0 && customer) {
-        const echeance = new Date();
-        echeance.setDate(echeance.getDate() + 30);
-        const creditRef = await addDoc(collection(db, tenantCol(tenantId, 'credits')), {
-          tenantId, saleId: saleRef.id,
-          customerId: customer.id,
-          customerName,
-          customerPhone: customer.phone || null,
-          montantTotal: total,
-          acompte, solde: soldeCredit,
-          dateEcheance: echeance.toISOString().split('T')[0],
-          status: 'PENDING',
-          userId: user.id,
-          createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-        });
-        if (acompte > 0) {
-          await addDoc(collection(db, `tenants/${tenantId}/credits/${creditRef.id}/credit_payments`), {
-            creditId: creditRef.id, montant: acompte,
-            soldeAvant: total, soldeApres: soldeCredit,
-            userId: user.id,
-            userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-            note: 'Acompte versé lors de la vente',
-            createdAt: serverTimestamp(),
-          });
-        }
-        // Mettre à jour creditUsed du client
-        const cSnap = await getDocs(
-          query(collection(db, tenantCol(tenantId, 'customers')), where('__name__', '==', customer.id))
-        );
-        if (!cSnap.empty) {
-          const { updateDoc: upd } = await import('firebase/firestore');
-          await upd(cSnap.docs[0].ref, {
-            creditUsed: (cSnap.docs[0].data().creditUsed || 0) + soldeCredit,
-            updatedAt: serverTimestamp(),
-          });
-        }
-      }
-
-      setLastSaleId(saleRef.id);
+      setLastSaleId(data.saleId);
       clearCart();
       setAmountReceived('');
       setShowPayment(false);
