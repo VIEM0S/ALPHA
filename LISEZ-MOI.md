@@ -1,86 +1,60 @@
-# Patch ALPHA — corrections + 3 nouvelles fonctionnalités
+# Patch ALPHA #02 — UI achats fournisseurs + retours + navigation + règles Firestore
 
-À extraire **directement à la racine du dépôt ALPHA** (les chemins reproduisent
-l'arborescence exacte du projet — écrase les fichiers existants concernés,
-crée les nouveaux).
+À extraire à la racine du dépôt, **après** avoir déjà appliqué le patch #01
+(`ALPHA-patch-01-achats-retours-export.zip`). Ce patch dépend du backend créé
+dans le patch #01 (`/api/purchase-orders/*`, `/api/sales/returns/create`).
 
-## 1. Corrections de sécurité (audit précédent)
+## Contenu
 
-- **`app/api/users/create/route.ts`** — 🔴 P1 corrigé : vérifie maintenant
-  `tenantId === callerTenantId`, comme `update`/`delete`/`toggle-status`.
-  Empêchait un ADMIN d'un tenant de créer un utilisateur dans un autre tenant.
-- **`app/api/cash-register/close/route.ts`** — 🟠 P2 corrigé : `openingBalance`,
-  `openedBy`, `openedAt` sont maintenant relus depuis la RTDB via l'Admin SDK
-  (source de vérité serveur) au lieu d'être acceptés tels quels depuis le
-  corps de la requête. Bloque aussi une double clôture (`status !== 'OPEN'`).
+- **`firestore.rules`** — remplace le fichier existant. Ajoute les règles
+  pour `purchase_orders` et `sale_returns` (lecture : membres du tenant ;
+  écriture : `false` côté client — tout passe par les routes API Admin SDK,
+  même logique que `sales`). **Pense à redéployer les règles**
+  (`firebase deploy --only firestore:rules`), sinon les nouvelles pages
+  afficheront une erreur de permission en lecture.
 
-## 2. Bons de commande fournisseurs (achats)
+- **`app/(dashboard)/purchase-orders/page.tsx`** — nouvelle page complète :
+  liste des bons de commande avec filtre par statut, création (choix
+  fournisseur + lignes produit/quantité/coût, brouillon ou envoi direct),
+  et réception (avec support de la réception partielle, une ligne à la fois).
+  Export CSV inclus.
 
-- **`app/api/purchase-orders/create/route.ts`** — crée un bon de commande
-  (statut `DRAFT` ou `SENT`), référence auto-générée (`BC-2026-0001`...).
-  N'impacte jamais le stock à la création.
-- **`app/api/purchase-orders/receive/route.ts`** — réceptionne tout ou partie
-  d'un bon de commande : incrémente le stock (transaction Firestore, même
-  logique anti-race-condition que `checkout`), crée les mouvements de stock
-  `IN`, met à jour `purchasePrice` du produit avec le dernier coût connu, et
-  fait passer le bon en `PARTIALLY_RECEIVED` ou `RECEIVED`.
-- Nouveau type `PurchaseOrder`/`PurchaseOrderItem` dans `lib/types/index.ts`.
-- Nouvelle collection `purchase_orders` déclarée dans `lib/firebase/collections.ts`.
+- **`app/(dashboard)/sales/page.tsx`** — remplace la version du patch #01 (elle
+  inclut déjà le bouton export CSV **et** ajoute maintenant un vrai flux de
+  retour : bouton "Retourner des articles" dans le panneau détail d'une
+  vente complétée, avec sélection quantité/produit, case "remettre en stock"
+  par article (pour les articles défectueux), motif obligatoire, et mode de
+  remboursement.
 
-**Il manque encore** : la page UI `app/(dashboard)/purchase-orders/page.tsx`
-(liste + formulaire de création + écran de réception) — je n'ai fait que le
-backend pour rester dans un patch raisonnable à relire. Je peux te la
-générer ensuite sur le modèle de `suppliers/page.tsx` si tu veux.
-**Il manque aussi** : les règles `firestore.rules` pour la nouvelle collection
-`purchase_orders` (lecture : `belongsToTenant` ; écriture : `isManager()`,
-même pattern que `suppliers`) — à ajouter avant de déployer, sinon le
-client Firestore ne pourra pas lire la liste des bons de commande.
+- **`components/layout/sidebar-nav.tsx`** — ajoute "Bons de commande" dans le
+  menu Stock (visible OWNER/ADMIN/MANAGER, cohérent avec le rôle requis par
+  la route API).
 
-## 3. Retours / remboursements clients
+## Point relevé au passage (hors scope de ce patch)
 
-- **`app/api/sales/returns/create/route.ts`** — traite un retour sur une
-  vente déjà finalisée : recalcule le remboursement à partir des vrais prix
-  d'origine, vérifie qu'on ne rembourse pas plus que ce qui a été acheté
-  (`returnedQuantity` existait déjà dans le type `SaleItem`, juste jamais
-  utilisé), réintègre le stock seulement pour les articles marqués
-  "restockable", passe la vente en `REFUNDED`/`PARTIALLY_REFUNDED`, et pose
-  une alerte `REFUND` (le type `AlertType` avait aussi déjà cette valeur
-  prévue mais non utilisée).
-- Manager+ requis, comme l'annulation de vente.
-- Nouveau type `SaleReturn`/`SaleReturnItem` dans `lib/types/index.ts`.
-- Nouvelle collection `sale_returns` déclarée dans `lib/firebase/collections.ts`.
+En regardant `handleCancel` dans `sales/page.tsx` pour brancher le retour à
+côté, j'ai remarqué que l'annulation de vente fait ses écritures
+(changement de statut + restauration de stock) **directement depuis le
+client** via le SDK Firestore, protégée uniquement par `firestore.rules`
+(`isManager()`), contrairement à `checkout` et maintenant aux retours qui
+passent par une route serveur avec recalcul. Ce n'est pas une faille ouverte
+— il faut déjà être Manager+ authentifié pour que les règles l'autorisent —
+mais la logique de restauration de stock (quantité à réintégrer) est alors
+calculée et déclenchée par le client plutôt que revérifiée côté serveur,
+contrairement à toutes les autres écritures sensibles du projet. Si tu veux,
+je peux migrer `handleCancel` vers une route `/api/sales/cancel` sur le
+modèle de `returns/create` pour rester cohérent partout — dis-moi si ça
+t'intéresse, je ne l'ai pas fait ici pour ne pas élargir le patch.
 
-**Il manque** : le bouton "Retourner" sur `sales/page.tsx` (aujourd'hui le
-bouton existant est juste un label d'annulation) et l'UI de sélection des
-articles à retourner — backend prêt, à brancher.
-**Il manque aussi** : les règles `firestore.rules` pour `sale_returns` (même
-pattern que `credits` : lecture `belongsToTenant`, écriture bloquée côté
-client car tout passe par cette route Admin SDK).
+## Pour tester
 
-## 4. Export CSV
-
-- **`lib/utils/export.ts`** — utilitaire générique sans dépendance externe
-  (`exportToCsv`, `toCsvString`, `formatDateForCsv`). Séparateur `;` + BOM
-  UTF-8 pour un import propre dans Excel avec les accents français.
-- **`app/(dashboard)/sales/page.tsx`** — bouton "Exporter CSV" ajouté à côté
-  du titre, exporte la liste actuellement filtrée (respecte les filtres
-  statut/date déjà en place sur la page). Facile à copier-coller sur
-  `inventory`, `credits`, `customers` etc. — le pattern est le même partout :
-  ```ts
-  exportToCsv('nom-fichier', tonTableauDejaFiltré, [
-    { key: 'champ', label: 'En-tête colonne' },
-    { key: 'date', label: 'Date', format: (v) => formatDateForCsv(v) },
-  ]);
-  ```
-
-## Points de vigilance avant déploiement
-
-1. Ajouter les règles `firestore.rules` manquantes (`purchase_orders`, `sale_returns`)
-   listées ci-dessus — sans elles, la lecture côté client échouera silencieusement.
-2. Le `.gitignore` actuel du dépôt exclut `*.json`, donc `package.json`/`tsconfig.json`
-   ne sont pas versionnés — je n'ai pas pu lancer un vrai `tsc` sur le projet
-   complet. J'ai vérifié la syntaxe fichier par fichier (cohérente avec le
-   style des routes existantes comme `checkout/route.ts`), mais un `npm run
-   build` local avant déploiement reste indispensable.
-3. Tester la réception de commande et le retour client sur un tenant de test
-   avant la prod — ce sont deux endpoints qui touchent au stock et à l'argent.
+1. Extraire ce zip à la racine, redéployer `firestore.rules`.
+2. Créer un bon de commande (Stock → Bons de commande → Nouveau), l'envoyer,
+   puis le réceptionner (même partiellement) → vérifier que le stock et le
+   `purchasePrice` du produit se mettent à jour, et qu'un mouvement `IN`
+   apparaît dans Stock → Mouvements.
+3. Sur une vente complétée (Ventes → clic sur une ligne), cliquer
+   "Retourner des articles", retourner une partie de la quantité, vérifier
+   que le stock remonte (si "remettre en stock" coché), qu'une alerte
+   `REFUND` apparaît, et que le statut de la vente passe à
+   PARTIALLY_REFUNDED ou REFUNDED selon le cas.

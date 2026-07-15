@@ -7,7 +7,7 @@ import {
   Receipt, FileText, Users, CreditCard, Truck,
   DollarSign, BarChart3, Store, Bell, Settings,
   ChevronDown, ChevronRight, LogOut, Tag, AlertTriangle,
-  History, User
+  History, User, PackagePlus
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils/helpers';
@@ -51,6 +51,7 @@ const NAV_ITEMS: NavItem[] = [
       { title: 'Inventaire', href: '/inventory', icon: Warehouse },
       { title: 'Mouvements', href: '/inventory/movements', icon: History },
       { title: 'Alertes', href: '/inventory/alerts', icon: AlertTriangle, badgeKey: 'lowStock' },
+      { title: 'Bons de commande', href: '/purchase-orders', icon: PackagePlus, roles: ['OWNER', 'ADMIN', 'MANAGER'] },
     ],
   },
   { title: 'Clients', href: '/customers', icon: Users },

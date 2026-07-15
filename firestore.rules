@@ -102,6 +102,23 @@ service cloud.firestore {
         allow write: if belongsToTenant(tenantId) && isManager();
       }
 
+      // ─── Purchase orders (bons de commande fournisseurs) ────────────────────
+      match /purchase_orders/{purchaseOrderId} {
+        allow read: if belongsToTenant(tenantId);
+        // Écriture uniquement via /api/purchase-orders/create et /receive
+        // (Admin SDK) : le serveur fige les prix produits, calcule les totaux
+        // et gère la réception transactionnelle du stock — jamais le client.
+        allow write: if false;
+      }
+
+      // ─── Sale returns (retours / remboursements) ─────────────────────────────
+      match /sale_returns/{returnId} {
+        allow read: if belongsToTenant(tenantId);
+        // Écriture uniquement via /api/sales/returns/create (Admin SDK) :
+        // le serveur recalcule le montant remboursé depuis la vente d'origine.
+        allow write: if false;
+      }
+
       // ─── Sales ─────────────────────────────────────────────────────────────
       match /sales/{saleId} {
         allow read: if belongsToTenant(tenantId);

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import {
   Search, Eye, X, ShoppingBag, RefreshCw,
   XCircle, CheckCircle2, ChevronRight, Banknote,
-  Smartphone, CreditCard, Users, Calendar
+  Smartphone, CreditCard, Users, Calendar, PackageCheck
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -31,6 +31,7 @@ import { tenantCol } from '@/lib/firebase/collections';
 interface SaleItem {
   productId: string; productName: string; productSku: string;
   quantity: number; unitPrice: number; total: number; costPrice?: number;
+  returnedQuantity?: number;
 }
 interface Sale {
   id: string; total: number; status: string; paymentMethod?: string;
@@ -64,6 +65,14 @@ export default function SalesPage() {
   const [cancelTarget, setCancelTarget] = useState<Sale | null>(null);
   const [cancelMotif, setCancelMotif] = useState('');
   const [isCancelling, setIsCancelling] = useState(false);
+
+  const [showReturn, setShowReturn] = useState(false);
+  const [returnQty, setReturnQty] = useState<Record<string, string>>({});
+  const [returnRestock, setReturnRestock] = useState<Record<string, boolean>>({});
+  const [returnReason, setReturnReason] = useState('');
+  const [refundMethod, setRefundMethod] = useState<'CASH' | 'STORE_CREDIT' | 'ORIGINAL_PAYMENT_METHOD'>('CASH');
+  const [isReturning, setIsReturning] = useState(false);
+  const [returnError, setReturnError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -154,6 +163,50 @@ export default function SalesPage() {
       if (selected?.id === cancelTarget.id) setSelected(prev => prev ? { ...prev, status: 'CANCELLED' } : null);
     } catch (e) { console.error('Cancel error:', e); }
     finally { setIsCancelling(false); }
+  };
+
+  // Ouvre le dialogue de retour, pré-rempli avec le reste retournable de chaque article
+  const openReturn = () => {
+    const qty: Record<string, string> = {};
+    const restock: Record<string, boolean> = {};
+    saleItems.forEach(it => {
+      qty[it.productId] = '0';
+      restock[it.productId] = true;
+    });
+    setReturnQty(qty); setReturnRestock(restock);
+    setReturnReason(''); setRefundMethod('CASH'); setReturnError(null);
+    setShowReturn(true);
+  };
+
+  // Retour client via la route serveur dédiée : montant recalculé côté
+  // serveur à partir des vrais prix de la vente, jamais depuis le client.
+  const handleReturn = async () => {
+    if (!tenantId || !selected) return;
+    const items = Object.entries(returnQty)
+      .map(([productId, v]) => ({ productId, quantity: Number(v) || 0, restock: !!returnRestock[productId] }))
+      .filter(l => l.quantity > 0);
+    if (items.length === 0) { setReturnError('Indique au moins une quantité à retourner'); return; }
+    if (!returnReason.trim()) { setReturnError('Le motif du retour est obligatoire'); return; }
+
+    setIsReturning(true); setReturnError(null);
+    try {
+      const res = await fetch('/api/sales/returns/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId, saleId: selected.id, items,
+          reason: returnReason.trim(), refundMethod,
+          processedByName: user ? `${user.firstName} ${user.lastName}`.trim() : null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors du retour');
+      setShowReturn(false);
+    } catch (e) {
+      setReturnError(e instanceof Error ? e.message : 'Erreur lors du retour');
+    } finally {
+      setIsReturning(false);
+    }
   };
 
   const StatusBadge = ({ status }: { status: string }) => (
@@ -350,9 +403,15 @@ export default function SalesPage() {
                 </div>
               </div>
 
+              {(selected.status === 'COMPLETED' || selected.status === 'PARTIALLY_REFUNDED') && (
+                <Button onClick={openReturn}
+                  variant="outline" className="w-full mt-4 text-amber-700 border-amber-200 hover:bg-amber-50">
+                  <PackageCheck className="h-4 w-4 mr-2" />Retourner des articles
+                </Button>
+              )}
               {selected.status === 'COMPLETED' && (
                 <Button onClick={() => { setCancelTarget(selected); setCancelMotif(''); }}
-                  variant="outline" className="w-full mt-4 text-red-600 border-red-200 hover:bg-red-50">
+                  variant="outline" className="w-full mt-2 text-red-600 border-red-200 hover:bg-red-50">
                   <XCircle className="h-4 w-4 mr-2" />Annuler cette vente
                 </Button>
               )}
@@ -396,6 +455,73 @@ export default function SalesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Dialog retour client */}
+      <Dialog open={showReturn} onOpenChange={o => { if (!o) setShowReturn(false); }}>
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Retourner des articles</DialogTitle></DialogHeader>
+          {returnError && <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">{returnError}</div>}
+          <div className="space-y-3 py-2">
+            {saleItems.map(item => {
+              const remaining = item.quantity - (item.returnedQuantity || 0);
+              if (remaining <= 0) return null;
+              return (
+                <div key={item.productId} className="flex items-center justify-between gap-3 border-b pb-3 last:border-0">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{item.productName}</p>
+                    <p className="text-xs text-gray-400">
+                      {item.productSku} · {remaining} restituable{remaining !== 1 ? 's' : ''} sur {item.quantity}
+                    </p>
+                    <label className="flex items-center gap-1.5 mt-1 text-xs text-gray-500">
+                      <input
+                        type="checkbox"
+                        checked={!!returnRestock[item.productId]}
+                        onChange={e => setReturnRestock(prev => ({ ...prev, [item.productId]: e.target.checked }))}
+                      />
+                      Remettre en stock (décocher si article défectueux)
+                    </label>
+                  </div>
+                  <Input
+                    type="number" min={0} max={remaining} className="w-20"
+                    value={returnQty[item.productId] ?? '0'}
+                    onChange={e => setReturnQty(prev => ({ ...prev, [item.productId]: e.target.value }))}
+                  />
+                </div>
+              );
+            })}
+            {saleItems.every(it => (it.quantity - (it.returnedQuantity || 0)) <= 0) && (
+              <p className="text-sm text-gray-400 text-center py-2">Tous les articles de cette vente ont déjà été retournés.</p>
+            )}
+
+            <div className="space-y-2">
+              <Label>Mode de remboursement</Label>
+              <Select value={refundMethod} onValueChange={v => setRefundMethod(v as typeof refundMethod)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CASH">Espèces</SelectItem>
+                  <SelectItem value="ORIGINAL_PAYMENT_METHOD">Mode de paiement d'origine</SelectItem>
+                  <SelectItem value="STORE_CREDIT">Avoir en magasin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Motif du retour *</Label>
+              <Textarea
+                placeholder="Ex : article défectueux, erreur de commande client..."
+                value={returnReason}
+                onChange={e => setReturnReason(e.target.value)}
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowReturn(false)} disabled={isReturning}>Annuler</Button>
+            <Button onClick={handleReturn} disabled={isReturning} className="bg-amber-600 hover:bg-amber-700">
+              {isReturning ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Traitement...</> : 'Confirmer le retour'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }
