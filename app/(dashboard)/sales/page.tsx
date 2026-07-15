@@ -22,8 +22,7 @@ import { exportToCsv, formatDateForCsv } from '@/lib/utils/export';
 import { Download } from 'lucide-react';
 import { useAuthStore } from '@/hooks/store';
 import {
-  collection, query, orderBy, onSnapshot, limit,
-  doc, updateDoc, addDoc, serverTimestamp, getDocs, where
+  collection, query, orderBy, onSnapshot, limit, getDocs
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
@@ -119,48 +118,25 @@ export default function SalesPage() {
   const nbCompleted = filtered.filter(s => s.status === 'COMPLETED').length;
   const nbCancelled = filtered.filter(s => s.status === 'CANCELLED').length;
 
-  // Annulation avec restauration de stock
+  // Annulation via la route serveur dédiée : le serveur revérifie le statut
+  // et restaure lui-même le stock (transaction, filtré par magasin), au lieu
+  // de faire confiance à des écritures Firestore calculées côté client.
   const handleCancel = async () => {
     if (!tenantId || !cancelTarget || !cancelMotif.trim()) return;
     setIsCancelling(true);
     try {
-      // 1. Marquer la vente comme annulée
-      await updateDoc(doc(db, tenantCol(tenantId, 'sales'), cancelTarget.id), {
-        status: 'CANCELLED',
-        motifAnnulation: cancelMotif.trim(),
-        cancelledBy: user?.id,
-        cancelledAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      const res = await fetch('/api/sales/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId, saleId: cancelTarget.id, motif: cancelMotif.trim() }),
       });
-
-      // 2. Restaurer le stock pour chaque article
-      const items = await getDocs(collection(db, `tenants/${tenantId}/sales/${cancelTarget.id}/sale_items`));
-      for (const item of items.docs) {
-        const d = item.data();
-        if (!d.productId) continue;
-        const invSnap = await getDocs(
-          query(collection(db, tenantCol(tenantId, 'inventory')), where('productId', '==', d.productId))
-        );
-        if (!invSnap.empty) {
-          const invDoc = invSnap.docs[0];
-          const newQty = (invDoc.data().quantity || 0) + d.quantity;
-          await updateDoc(invDoc.ref, { quantity: newQty, updatedAt: serverTimestamp() });
-          // Mouvement de stock
-          await addDoc(collection(db, tenantCol(tenantId, 'inventory_movements')), {
-            tenantId, productId: d.productId,
-            storeId: invDoc.data().storeId,
-            type: 'IN', quantity: d.quantity,
-            previousQuantity: invDoc.data().quantity,
-            newQuantity: newQty,
-            reason: `Annulation vente #${cancelTarget.id.slice(0,8).toUpperCase()} — ${cancelMotif}`,
-            saleId: cancelTarget.id,
-            createdAt: serverTimestamp(),
-          });
-        }
-      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de l\'annulation');
 
       setCancelTarget(null); setCancelMotif('');
-      if (selected?.id === cancelTarget.id) setSelected(prev => prev ? { ...prev, status: 'CANCELLED' } : null);
+      if (selected?.id === cancelTarget.id) {
+        setSelected(prev => prev ? { ...prev, status: 'CANCELLED', motifAnnulation: cancelMotif.trim() } : null);
+      }
     } catch (e) { console.error('Cancel error:', e); }
     finally { setIsCancelling(false); }
   };

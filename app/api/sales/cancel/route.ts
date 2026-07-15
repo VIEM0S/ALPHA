@@ -1,0 +1,110 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { adminAuth, adminDb } from '@/lib/firebase/admin';
+import { FieldValue } from 'firebase-admin/firestore';
+import { cookies } from 'next/headers';
+
+// Annule une vente complétée et restaure le stock.
+// Migré depuis une écriture client (Firestore SDK + firestore.rules) vers
+// cette route Admin SDK pour rester cohérent avec checkout/receive/returns :
+// le serveur revérifie tout (statut, quantités déjà retournées) au lieu de
+// faire confiance à ce que le client calcule et envoie.
+export async function POST(request: NextRequest) {
+  try {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('__session')?.value;
+    if (!sessionCookie) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+
+    const decoded = await adminAuth.verifySessionCookie(sessionCookie, true);
+    const callerRole = decoded.role as string;
+    const callerTenantId = decoded.tenantId as string;
+    const callerUid = decoded.uid as string;
+
+    if (!['OWNER', 'ADMIN', 'MANAGER'].includes(callerRole)) {
+      return NextResponse.json({ error: 'Accès refusé (Manager+ requis)' }, { status: 403 });
+    }
+
+    const { tenantId, saleId, motif }: { tenantId: string; saleId: string; motif: string } = await request.json();
+    if (!tenantId || !saleId || !motif?.trim()) {
+      return NextResponse.json({ error: 'Motif d\'annulation requis' }, { status: 400 });
+    }
+    if (tenantId !== callerTenantId) {
+      return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
+    }
+
+    const saleRef = adminDb.doc(`tenants/${tenantId}/sales/${saleId}`);
+    const saleSnap = await saleRef.get();
+    if (!saleSnap.exists) return NextResponse.json({ error: 'Vente introuvable' }, { status: 404 });
+    const sale = saleSnap.data()!;
+    // On ne peut annuler qu'une vente encore intacte : si des articles ont déjà
+    // été retournés (PARTIALLY_REFUNDED), une annulation complète restaurerait
+    // deux fois le stock déjà réintégré par le retour — donc interdit.
+    if (sale.status !== 'COMPLETED') {
+      return NextResponse.json({ error: `Impossible d'annuler une vente ${sale.status}` }, { status: 409 });
+    }
+
+    const itemsSnap = await adminDb.collection(`tenants/${tenantId}/sales/${saleId}/sale_items`).get();
+    const items = itemsSnap.docs.map(d => d.data() as { productId: string; quantity: number; productName: string });
+
+    // ── Trouver les docs inventory du bon magasin pour chaque produit ─────────
+    // (le code client d'origine cherchait par productId seul, sans filtrer par
+    // storeId — risque de restaurer le stock du mauvais magasin en multi-store)
+    const invRefs: Record<string, FirebaseFirestore.DocumentReference> = {};
+    for (const item of items) {
+      if (!item.productId) continue;
+      const invSnap = await adminDb
+        .collection(`tenants/${tenantId}/inventory`)
+        .where('productId', '==', item.productId)
+        .where('storeId', '==', sale.storeId)
+        .limit(1)
+        .get();
+      if (!invSnap.empty) invRefs[item.productId] = invSnap.docs[0].ref;
+    }
+
+    const movementsToWrite: Array<{ productId: string; qty: number; previousQuantity: number; newQuantity: number }> = [];
+
+    await adminDb.runTransaction(async (tx) => {
+      // ── Lectures d'abord ────────────────────────────────────────────────
+      const freshQtys: Record<string, number> = {};
+      for (const [productId, ref] of Object.entries(invRefs)) {
+        const fresh = await tx.get(ref);
+        freshQtys[productId] = fresh.data()?.quantity || 0;
+      }
+
+      // ── Écritures ────────────────────────────────────────────────────────
+      for (const item of items) {
+        const ref = invRefs[item.productId];
+        if (!ref) continue;
+        const previousQuantity = freshQtys[item.productId] || 0;
+        const newQuantity = previousQuantity + item.quantity;
+        tx.update(ref, { quantity: newQuantity, updatedAt: FieldValue.serverTimestamp() });
+        movementsToWrite.push({ productId: item.productId, qty: item.quantity, previousQuantity, newQuantity });
+      }
+
+      tx.update(saleRef, {
+        status: 'CANCELLED',
+        motifAnnulation: motif.trim(),
+        cancelledBy: callerUid,
+        cancelledAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    // ── Mouvements de stock (hors transaction, comme checkout/receive/returns) ─
+    await Promise.all(movementsToWrite.map(m =>
+      adminDb.collection(`tenants/${tenantId}/inventory_movements`).add({
+        tenantId, productId: m.productId, storeId: sale.storeId,
+        type: 'IN', quantity: m.qty,
+        previousQuantity: m.previousQuantity, newQuantity: m.newQuantity,
+        reason: `Annulation vente #${saleId.slice(0, 8).toUpperCase()} — ${motif.trim()}`,
+        saleId,
+        createdBy: callerUid,
+        createdAt: FieldValue.serverTimestamp(),
+      })
+    ));
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Cancel sale error:', error);
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+  }
+}

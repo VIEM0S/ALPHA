@@ -125,8 +125,9 @@ service cloud.firestore {
         // Créées uniquement par /api/pos/checkout (Admin SDK) — le serveur
         // recalcule les prix et le coût réel, jamais depuis le client.
         allow create: if false;
-        // Annulation uniquement par Manager+
-        allow update: if belongsToTenant(tenantId) && isManager();
+        // Annulation uniquement par /api/sales/cancel (Admin SDK) : le serveur
+        // revérifie le statut et restaure le stock lui-même, jamais le client.
+        allow update: if false;
         allow delete: if false;
 
         match /sale_items/{itemId} {
