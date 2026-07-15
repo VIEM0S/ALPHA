@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Eye, EyeOff, Loader2, Store, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, Loader2, Store, AlertCircle, ArrowLeft } from 'lucide-react';
 import {
   signInWithEmailAndPassword,
   AuthError,
@@ -92,11 +92,21 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-950 via-primary-900 to-primary-800 px-4">
       <div className="w-full max-w-md">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 text-sm text-primary-200 hover:text-white transition-colors mb-6"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Retour à l'accueil
+        </Link>
+
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-sm mb-4">
+          <Link href="/" className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-sm mb-4 hover:bg-white/20 transition-colors">
             <Store className="h-8 w-8 text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-white">ProAlpha ERP</h1>
+          </Link>
+          <Link href="/">
+            <h1 className="text-3xl font-bold text-white hover:text-primary-200 transition-colors">ProAlpha ERP</h1>
+          </Link>
           <p className="text-primary-200 mt-2">Système de gestion Enterprise</p>
         </div>
 

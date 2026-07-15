@@ -1,47 +1,34 @@
-# Patch ALPHA #03 — Annulation de vente migrée côté serveur
+# Patch ALPHA #04 — Retour à l'accueil depuis les pages d'authentification
 
-À extraire à la racine du dépôt, **après** les patches #01 et #02 (ce patch
-remplace à nouveau `sales/page.tsx` et `firestore.rules` — c'est la version
-la plus à jour des trois, elle inclut tout : export CSV, retours, ET
-annulation serveur).
+À extraire à la racine du dépôt. Corrige exactement ce que tu as repéré sur
+la capture : aucune des pages `/login`, `/forgot-password`, `/setup`
+n'offrait de moyen de revenir à la page d'accueil (`/`) — le logo/titre
+n'était pas cliquable, et il n'y avait aucun autre lien de sortie.
 
-## Ce qui change
+## Ce qui change (3 fichiers)
 
-- **`app/api/sales/cancel/route.ts`** (nouveau) — reprend exactement la
-  logique qui était dans `handleCancel` côté client, mais côté serveur :
-  - Revérifie que la vente est bien `COMPLETED` avant d'annuler (bloque une
-    double annulation, et bloque l'annulation d'une vente déjà partiellement
-    retournée — sinon le stock déjà réintégré par un retour serait réintégré
-    une deuxième fois).
-  - Restaure le stock dans une transaction Firestore (lecture avant écriture,
-    même pattern que `checkout`/`receive`/`returns`).
-  - **Bonus fix au passage** : le code client d'origine cherchait la ligne
-    d'inventaire par `productId` seul, sans filtrer par `storeId`. Sur un
-    compte multi-magasins, une annulation aurait pu réintégrer le stock du
-    mauvais magasin (le premier trouvé pour ce produit, peu importe lequel).
-    La route serveur filtre maintenant par `storeId` de la vente, comme
-    `returns/create`.
+- **`app/(auth)/login/page.tsx`**
+- **`app/(auth)/forgot-password/page.tsx`**
+- **`app/(onboarding)/setup/page.tsx`**
 
-- **`firestore.rules`** — `sales.update` passe de `isManager()` à `false` :
-  plus aucune écriture client sur `sales` n'est autorisée, tout passe
-  désormais par les 3 routes serveur (`checkout`, `cancel`, `returns/create`).
-  **Redéployer les règles après extraction.**
+Sur chaque page :
+- Un lien texte **"← Retour à l'accueil"** en haut, au-dessus de la carte —
+  visible et sans ambiguïté, et qui fonctionne même si le formulaire est en
+  train de charger (ce n'est pas un bouton désactivé pendant
+  `isLoading`, contrairement au bouton "Se connecter").
+- Le logo + titre "ProAlpha ERP" redeviennent aussi cliquables vers `/`.
 
-- **`app/(dashboard)/sales/page.tsx`** — `handleCancel` appelle maintenant
-  `/api/sales/cancel` au lieu d'écrire directement dans Firestore. Les
-  imports `where`, `addDoc`, `updateDoc`, `doc`, `serverTimestamp` de
-  `firebase/firestore` ont été retirés car plus utilisés dans ce fichier.
+Sur **`setup`** spécifiquement (formulaire en plusieurs étapes) : cliquer
+"Retour à l'accueil" déclenche une confirmation ("Quitter la configuration ?
+Les informations déjà saisies seront perdues.") **seulement si** l'utilisateur
+a déjà commencé à remplir le formulaire (nom d'entreprise, email, prénom...).
+Sur `login` et `forgot-password`, pas de confirmation nécessaire — rien à
+perdre.
 
-## Cohérence obtenue
+## Ce que ça règle concrètement
 
-Les 4 opérations qui touchent au stock ou à l'argent sur une vente
-(`checkout`, `cancel`, `receive` d'un bon de commande, `returns/create`)
-passent maintenant toutes par une route serveur avec transaction Firestore
-et recalcul/revérification côté Admin SDK. Plus aucune ne fait confiance à
-un calcul fait côté client.
-
-## À tester
-
-Annuler une vente COMPLETED sur un compte avec plusieurs magasins actifs →
-vérifier que le stock remonte bien dans le **bon** magasin (celui de la
-vente), pas dans un autre magasin qui aurait le même produit en stock.
+Le scénario que tu décrivais : quelqu'un clique "Se connecter" par erreur
+depuis l'accueil, ou est sur `/login` et veut plutôt créer un nouveau compte
+(un autre que celui pré-rempli), ou est juste bloqué sur "Connexion en
+cours..." et veut sortir — il y a maintenant toujours un chemin de retour
+visible en haut de chaque écran.
