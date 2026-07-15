@@ -66,6 +66,8 @@ export const COLLECTIONS = {
   auditLogs: 'audit_logs',
   notifications: 'notifications',
   subscriptions: 'subscriptions',
+  purchaseOrders: 'purchase_orders',
+  saleReturns: 'sale_returns',
 } as const;
 
 /** Chemin vers une sous-collection d'un tenant */

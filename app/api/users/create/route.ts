@@ -11,6 +11,7 @@ export async function POST(request: NextRequest) {
 
     const decoded = await adminAuth.verifySessionCookie(sessionCookie, true);
     const callerRole = decoded.role as string;
+    const callerTenantId = decoded.tenantId as string;
     if (!['OWNER', 'ADMIN'].includes(callerRole)) {
       return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
     }
@@ -18,6 +19,11 @@ export async function POST(request: NextRequest) {
     const { tenantId, email, password, firstName, lastName, phone, role } = await request.json();
     if (!email || !password || !firstName || !lastName || !role || !tenantId) {
       return NextResponse.json({ error: 'Champs manquants' }, { status: 400 });
+    }
+    // Isolation multi-tenant : un ADMIN/OWNER ne peut créer un utilisateur que
+    // dans son propre tenant, jamais dans un tenant tiers (cf. update/delete/toggle-status).
+    if (tenantId !== callerTenantId) {
+      return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
     }
     if (!['ADMIN', 'MANAGER', 'CASHIER'].includes(role)) {
       return NextResponse.json({ error: 'Rôle invalide' }, { status: 400 });

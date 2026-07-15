@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminAuth, adminDb } from '@/lib/firebase/admin';
+import { adminAuth, adminDb, adminRtdb } from '@/lib/firebase/admin';
 import { Timestamp } from 'firebase-admin/firestore';
 import { cookies } from 'next/headers';
+import { RTDB_PATHS } from '@/lib/firebase/rtdb';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,16 +16,36 @@ export async function POST(request: NextRequest) {
 
     const {
       tenantId, storeId, registerId,
-      openedBy, openedByName, openedAt, openingBalance,
       countedAmount, notes, closedByName,
     } = await request.json();
 
-    if (!tenantId || !storeId || !registerId || openingBalance === undefined || countedAmount === undefined) {
+    if (!tenantId || !storeId || !registerId || countedAmount === undefined) {
       return NextResponse.json({ error: 'Champs manquants' }, { status: 400 });
     }
     if (tenantId !== callerTenantId) {
       return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
     }
+
+    // ── Session RTDB = source de vérité, jamais le corps de la requête ──────
+    // openingBalance/openedBy/openedAt viennent de la caisse ouverte en RTDB,
+    // pas du client : sinon un caissier pourrait appeler cette route hors UI
+    // avec un openingBalance falsifié pour masquer un manque de caisse.
+    const rtdbPath = RTDB_PATHS.cashRegister(tenantId, registerId);
+    const liveSnap = await adminRtdb.ref(rtdbPath).get();
+    if (!liveSnap.exists()) {
+      return NextResponse.json({ error: 'Aucune caisse ouverte trouvée' }, { status: 404 });
+    }
+    const liveSession = liveSnap.val() as {
+      status?: string; openedBy?: string; openedByName?: string;
+      openedAt?: number; openingBalance?: number;
+    };
+    if (liveSession.status !== 'OPEN') {
+      return NextResponse.json({ error: 'Cette caisse est déjà fermée' }, { status: 409 });
+    }
+    const openedBy = liveSession.openedBy ?? null;
+    const openedByName = liveSession.openedByName ?? null;
+    const openedAt = liveSession.openedAt ?? null;
+    const openingBalance = liveSession.openingBalance ?? 0;
 
     // ── Recalcul serveur des ventes du jour pour ce magasin ──────────────────
     // On ne fait JAMAIS confiance aux totaux envoyés par le client : on les
@@ -75,6 +96,11 @@ export async function POST(request: NextRequest) {
       notes: notes || null,
       createdAt: new Date().toISOString(),
     });
+
+    // ── Marquer la caisse RTDB comme fermée côté serveur (source de vérité) ──
+    // Le client refait aussi ce `set` après coup ; on le fait déjà ici pour
+    // que l'état soit cohérent même si l'appel client échoue après ce point.
+    await adminRtdb.ref(rtdbPath).set({ status: 'CLOSED', closedAt: Date.now() });
 
     return NextResponse.json({ success: true, id: docRef.id, expectedBalance, difference, cashSalesTotal, salesTotal, txCount });
   } catch (error) {

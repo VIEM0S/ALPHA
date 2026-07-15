@@ -18,6 +18,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { formatCurrency, formatDateTime, toFirestoreDate } from '@/lib/utils/helpers';
+import { exportToCsv, formatDateForCsv } from '@/lib/utils/export';
+import { Download } from 'lucide-react';
 import { useAuthStore } from '@/hooks/store';
 import {
   collection, query, orderBy, onSnapshot, limit,
@@ -171,6 +173,23 @@ export default function SalesPage() {
               {nbCancelled > 0 && <span className="ml-2 text-red-500">· {nbCancelled} annulée{nbCancelled !== 1 ? 's' : ''}</span>}
             </p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={filtered.length === 0}
+            onClick={() => exportToCsv(`ventes-${new Date().toISOString().slice(0, 10)}`, filtered, [
+              { key: 'id', label: 'N° vente' },
+              { key: 'createdAt', label: 'Date', format: (v) => formatDateForCsv(v) },
+              { key: 'customerName', label: 'Client' },
+              { key: 'paymentMethod', label: 'Paiement' },
+              { key: 'status', label: 'Statut' },
+              { key: 'itemCount', label: 'Articles' },
+              { key: 'total', label: 'Total' },
+            ])}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Exporter CSV
+          </Button>
         </div>
 
         {/* Stats */}

@@ -378,3 +378,68 @@ export interface Cart {
   discountReason: string | null;
   notes: string | null;
 }
+
+// ─── Achats fournisseurs (bons de commande) ────────────────────────────────
+
+export type PurchaseOrderStatus = 'DRAFT' | 'SENT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED';
+
+export interface PurchaseOrder {
+  id: string;
+  tenantId: string;
+  reference: string;
+  supplierId: string;
+  supplier?: Supplier;
+  storeId: string; // magasin/entrepôt de destination
+  status: PurchaseOrderStatus;
+  items: PurchaseOrderItem[];
+  subtotal: number;
+  notes: string | null;
+  expectedDate: string | null; // date de livraison attendue (YYYY-MM-DD)
+  createdBy: string;
+  createdByName: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  receivedAt: Date | null;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  quantityOrdered: number;
+  quantityReceived: number; // cumul reçu (permet la réception partielle)
+  unitCost: number; // coût d'achat unitaire pour cette commande
+  total: number;
+}
+
+// ─── Retours / remboursements ──────────────────────────────────────────────
+
+export type ReturnStatus = 'COMPLETED' | 'CANCELLED';
+export type RefundMethod = 'CASH' | 'STORE_CREDIT' | 'ORIGINAL_PAYMENT_METHOD';
+
+export interface SaleReturn {
+  id: string;
+  tenantId: string;
+  saleId: string;
+  saleReference: string;
+  storeId: string;
+  customerId: string | null;
+  items: SaleReturnItem[];
+  refundAmount: number;
+  refundMethod: RefundMethod;
+  reason: string;
+  status: ReturnStatus;
+  processedBy: string;
+  processedByName: string | null;
+  createdAt: Date;
+}
+
+export interface SaleReturnItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  restocked: boolean; // false si l'article est retourné défectueux (pas remis en stock)
+}
