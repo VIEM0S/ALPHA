@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase/admin';
+import { checkPlanLimit } from '@/lib/firebase/plan-limits';
 import { cookies } from 'next/headers';
 
 export async function POST(request: NextRequest) {
@@ -27,6 +28,12 @@ export async function POST(request: NextRequest) {
     }
     if (!['ADMIN', 'MANAGER', 'CASHIER'].includes(role)) {
       return NextResponse.json({ error: 'Rôle invalide' }, { status: 400 });
+    }
+
+    // Limite du forfait (fix : les forfaits n'étaient jamais vérifiés nulle part)
+    const limitCheck = await checkPlanLimit(tenantId, 'maxUsers');
+    if (!limitCheck.allowed) {
+      return NextResponse.json({ error: limitCheck.reason }, { status: 403 });
     }
 
     // Créer dans Firebase Auth

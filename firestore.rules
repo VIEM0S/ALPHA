@@ -151,7 +151,11 @@ service cloud.firestore {
       // ─── Credits ───────────────────────────────────────────────────────────
       match /credits/{creditId} {
         allow read: if belongsToTenant(tenantId);
-        allow create: if belongsToTenant(tenantId);
+        // Fix : "create" était ouvert à tout membre du tenant sans check de rôle,
+        // alors que "update" exigeait déjà isManager(). En pratique la création
+        // passe par l'API checkout (Admin SDK, qui ignore ces règles), donc ceci
+        // ferme uniquement une brèche cliente non exploitée par l'app actuelle.
+        allow create: if belongsToTenant(tenantId) && isManager();
         allow update: if belongsToTenant(tenantId) && isManager();
         allow delete: if false;
 

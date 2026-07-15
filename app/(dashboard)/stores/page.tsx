@@ -29,6 +29,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
+import { checkPlanLimitClient } from '@/lib/firebase/plan-limits-client';
 import type { Store } from '@/lib/types';
 
 interface StoreForm {
@@ -85,6 +86,16 @@ export default function StoresPage() {
     if (!tenantId) return;
     if (!form.name.trim()) { setFormError('Le nom du magasin est obligatoire'); return; }
     setIsSaving(true); setFormError(null);
+
+    if (!editing) {
+      const limitCheck = await checkPlanLimitClient(tenantId, 'maxStores');
+      if (!limitCheck.allowed) {
+        setFormError(limitCheck.reason);
+        setIsSaving(false);
+        return;
+      }
+    }
+
     const payload = {
       tenantId, name: form.name.trim(),
       code: form.code.trim() || form.name.slice(0, 3).toUpperCase(),

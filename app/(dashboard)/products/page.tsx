@@ -44,6 +44,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
+import { checkPlanLimitClient } from '@/lib/firebase/plan-limits-client';
 import type { Product, Category } from '@/lib/types';
 
 // ─── Types form ───────────────────────────────────────────────────────────────
@@ -223,6 +224,15 @@ function ProductsPageInner() {
 
     setIsSaving(true);
     setFormError(null);
+
+    if (!editingProduct) {
+      const limitCheck = await checkPlanLimitClient(tenantId, 'maxProducts');
+      if (!limitCheck.allowed) {
+        setFormError(limitCheck.reason);
+        setIsSaving(false);
+        return;
+      }
+    }
 
     const payload = {
       tenantId,

@@ -24,11 +24,12 @@ import {
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils/helpers';
 import { useAuthStore } from '@/hooks/store';
 import {
-  collection, query, orderBy, onSnapshot, where,
-  doc, addDoc, updateDoc, serverTimestamp, getDocs
+  collection, query, orderBy, onSnapshot,
+  doc, serverTimestamp, runTransaction
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
+import { ROLE_PERMISSIONS } from '@/lib/constants';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -88,6 +89,9 @@ function isEnRetard(dateStr: string, status: string): boolean {
 export default function CreditsPage() {
   const { tenant, user } = useAuthStore();
   const tenantId = tenant?.id;
+  const canManageCredits = user?.role
+    ? Boolean(ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS]?.canManageCredits)
+    : false;
 
   const [credits, setCredits] = useState<Credit[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -164,6 +168,10 @@ export default function CreditsPage() {
 
   const handleVersement = async () => {
     if (!tenantId || !selected || !user) return;
+    if (!canManageCredits) {
+      setVersementError('Vous n\'avez pas la permission d\'enregistrer un versement de crédit.');
+      return;
+    }
     const montant = Number(montantVersement);
     if (!montant || montant <= 0) {
       setVersementError('Montant invalide'); return;
@@ -175,17 +183,42 @@ export default function CreditsPage() {
     setIsSaving(true);
     setVersementError(null);
 
-    try {
-      const soldeAvant = selected.solde;
-      const soldeApres = Math.max(0, soldeAvant - montant);
-      const nouveauStatut = soldeApres === 0 ? 'PAID'
-        : soldeApres < selected.montantTotal ? 'PARTIALLY_PAID'
-        : selected.status;
+    const creditRef = doc(db, tenantCol(tenantId, 'credits'), selected.id);
+    const paymentRef = doc(collection(db, `tenants/${tenantId}/credits/${selected.id}/credit_payments`));
 
-      // Enregistrer le versement
-      await addDoc(
-        collection(db, `tenants/${tenantId}/credits/${selected.id}/credit_payments`),
-        {
+    try {
+      // Fix : les 3 écritures (versement, crédit, client) se faisaient auparavant
+      // en 3 appels séparés non-atomiques, avec un solde calculé côté client sur
+      // une valeur potentiellement périmée (`selected.solde`). Deux versements
+      // presque simultanés (double onglet, deux appareils) pouvaient s'écraser
+      // l'un l'autre. On relit tout DANS la transaction et on écrit ensemble.
+      const result = await runTransaction(db, async (tx) => {
+        const creditSnap = await tx.get(creditRef);
+        if (!creditSnap.exists()) throw new Error('Crédit introuvable');
+        const creditData = creditSnap.data() as Credit;
+
+        const soldeAvant = creditData.solde;
+        if (montant > soldeAvant) {
+          throw new Error(`Montant supérieur au solde restant (${formatCurrency(soldeAvant)})`);
+        }
+        const soldeApres = Math.max(0, soldeAvant - montant);
+        const nouveauStatut = soldeApres === 0 ? 'PAID'
+          : soldeApres < creditData.montantTotal ? 'PARTIALLY_PAID'
+          : creditData.status;
+
+        let customerRef: ReturnType<typeof doc> | null = null;
+        let currentUsed = 0;
+        if (creditData.customerId) {
+          customerRef = doc(db, tenantCol(tenantId, 'customers'), creditData.customerId);
+          const customerSnap = await tx.get(customerRef);
+          if (customerSnap.exists()) {
+            currentUsed = Number(customerSnap.data().creditUsed) || 0;
+          } else {
+            customerRef = null;
+          }
+        }
+
+        tx.set(paymentRef, {
           creditId: selected.id,
           montant,
           soldeAvant,
@@ -193,35 +226,28 @@ export default function CreditsPage() {
           userId: user.id,
           userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
           createdAt: serverTimestamp(),
-        }
-      );
+        });
 
-      // Mettre à jour le crédit
-      await updateDoc(doc(db, tenantCol(tenantId, 'credits'), selected.id), {
-        solde: soldeApres,
-        status: nouveauStatut,
-        updatedAt: serverTimestamp(),
-      });
-
-      // Mettre à jour le crédit utilisé du client
-      const customerSnap = await getDocs(
-        query(collection(db, tenantCol(tenantId, 'customers')),
-          where('__name__', '==', selected.customerId))
-      );
-      if (!customerSnap.empty) {
-        const customerDoc = customerSnap.docs[0];
-        const currentUsed = customerDoc.data().creditUsed || 0;
-        await updateDoc(customerDoc.ref, {
-          creditUsed: Math.max(0, currentUsed - montant),
+        tx.update(creditRef, {
+          solde: soldeApres,
+          status: nouveauStatut,
           updatedAt: serverTimestamp(),
         });
-      }
+
+        if (customerRef) {
+          tx.update(customerRef, {
+            creditUsed: Math.max(0, currentUsed - montant),
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        return { soldeApres, nouveauStatut };
+      });
 
       setMontantVersement('');
-      // Mettre à jour le selected localement
-      setSelected(prev => prev ? { ...prev, solde: soldeApres, status: nouveauStatut } : null);
+      setSelected(prev => prev ? { ...prev, solde: result.soldeApres, status: result.nouveauStatut } : null);
     } catch (e) {
-      setVersementError('Erreur lors de l\'enregistrement');
+      setVersementError(e instanceof Error ? e.message : 'Erreur lors de l\'enregistrement');
       console.error(e);
     } finally {
       setIsSaving(false);
@@ -455,27 +481,35 @@ export default function CreditsPage() {
                         {versementError}
                       </div>
                     )}
-                    <div className="flex gap-2">
-                      <Input
-                        type="number" min="1" max={selected.solde}
-                        placeholder={`Max ${formatCurrency(selected.solde)}`}
-                        value={montantVersement}
-                        onChange={e => { setMontantVersement(e.target.value); setVersementError(null); }}
-                        className="flex-1"
-                      />
-                      <Button
-                        onClick={handleVersement}
-                        disabled={isSaving || !montantVersement}
-                        className="bg-green-600 hover:bg-green-700"
-                      >
-                        {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" />Valider</>}
-                      </Button>
-                    </div>
-                    {montantVersement && Number(montantVersement) > 0 && Number(montantVersement) <= selected.solde && (
-                      <p className="text-xs text-gray-500 mt-2">
-                        Solde après versement : <strong>{formatCurrency(selected.solde - Number(montantVersement))}</strong>
-                        {Number(montantVersement) >= selected.solde && ' → Crédit soldé ✅'}
-                      </p>
+                    {!canManageCredits ? (
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-500">
+                        Seuls les managers et responsables peuvent enregistrer un versement de crédit.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex gap-2">
+                          <Input
+                            type="number" min="1" max={selected.solde}
+                            placeholder={`Max ${formatCurrency(selected.solde)}`}
+                            value={montantVersement}
+                            onChange={e => { setMontantVersement(e.target.value); setVersementError(null); }}
+                            className="flex-1"
+                          />
+                          <Button
+                            onClick={handleVersement}
+                            disabled={isSaving || !montantVersement}
+                            className="bg-green-600 hover:bg-green-700"
+                          >
+                            {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" />Valider</>}
+                          </Button>
+                        </div>
+                        {montantVersement && Number(montantVersement) > 0 && Number(montantVersement) <= selected.solde && (
+                          <p className="text-xs text-gray-500 mt-2">
+                            Solde après versement : <strong>{formatCurrency(selected.solde - Number(montantVersement))}</strong>
+                            {Number(montantVersement) >= selected.solde && ' → Crédit soldé ✅'}
+                          </p>
+                        )}
+                      </>
                     )}
                   </div>
                 )}

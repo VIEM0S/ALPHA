@@ -85,6 +85,21 @@ export async function POST(request: NextRequest) {
 
     const acompte = paymentMethod === 'CREDIT' ? Math.max(0, Math.min(Number(amountReceived) || 0, total)) : total;
     const soldeCredit = paymentMethod === 'CREDIT' ? Math.max(0, total - acompte) : 0;
+
+    // Fix : le plafond de crédit du client (customer.creditLimit) n'était jamais
+    // vérifié — un client pouvait accumuler une dette illimitée.
+    if (paymentMethod === 'CREDIT' && soldeCredit > 0 && customer) {
+      const creditLimit = Number(customer.creditLimit) || 0;
+      const creditUsed = Number(customer.creditUsed) || 0;
+      if (creditUsed + soldeCredit > creditLimit) {
+        const disponible = Math.max(0, creditLimit - creditUsed);
+        return NextResponse.json(
+          { error: `Plafond de crédit dépassé pour ce client. Crédit disponible : ${disponible} FCFA.` },
+          { status: 400 }
+        );
+      }
+    }
+
     const receivedCash = paymentMethod === 'CASH' ? (Number(amountReceived) || total) : acompte;
     if (paymentMethod === 'CASH' && receivedCash < total) {
       return NextResponse.json({ error: 'Montant reçu insuffisant' }, { status: 400 });

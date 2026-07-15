@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase/admin';
+import { SUBSCRIPTION_PLANS, PlanId } from '@/lib/constants';
 
 function slugify(str: string): string {
   return str
@@ -10,11 +11,8 @@ function slugify(str: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-const PLAN_LIMITS = {
-  STARTER:    { maxUsers: 3,  maxStores: 1,  maxProducts: 500,   posEnabled: true,  analyticsEnabled: false, multiStoreEnabled: false, apiAccessEnabled: false },
-  BUSINESS:   { maxUsers: 10, maxStores: 3,  maxProducts: 5000,  posEnabled: true,  analyticsEnabled: true,  multiStoreEnabled: true,  apiAccessEnabled: false },
-  ENTERPRISE: { maxUsers: -1, maxStores: -1, maxProducts: -1,    posEnabled: true,  analyticsEnabled: true,  multiStoreEnabled: true,  apiAccessEnabled: true  },
-};
+// Source unique des limites de forfait : lib/constants/index.ts (SUBSCRIPTION_PLANS).
+// Ne plus dupliquer ces valeurs ici — deux copies avaient fini par diverger.
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,7 +42,8 @@ export async function POST(request: NextRequest) {
     const uid = firebaseUser.uid;
     const now = new Date().toISOString();
     const tenantSlug = slugify(company.name);
-    const limits = PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS] ?? PLAN_LIMITS.BUSINESS;
+    const planId: PlanId = (plan as PlanId) in SUBSCRIPTION_PLANS ? (plan as PlanId) : 'BUSINESS';
+    const limits = SUBSCRIPTION_PLANS[planId].features;
 
     // 2. Créer le tenant Firestore
     const tenantRef = adminDb.collection('tenants').doc();
@@ -77,7 +76,7 @@ export async function POST(request: NextRequest) {
     const subRef = adminDb.collection(`tenants/${tenantId}/subscriptions`).doc(tenantId);
     batch.set(subRef, {
       tenantId,
-      plan: plan || 'BUSINESS',
+      plan: planId,
       status: 'TRIAL',
       trialEndsAt: trialEnd,
       currentPeriodStart: now,

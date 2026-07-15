@@ -153,7 +153,7 @@ export const SUBSCRIPTION_PLANS = {
       maxProducts: 500,
       maxCustomers: 500,
       posEnabled: true,
-      analyticsEnabled: true,
+      analyticsEnabled: false,
       multiStoreEnabled: false,
       apiAccessEnabled: false,
     },
@@ -170,7 +170,7 @@ export const SUBSCRIPTION_PLANS = {
       posEnabled: true,
       analyticsEnabled: true,
       multiStoreEnabled: true,
-      apiAccessEnabled: true,
+      apiAccessEnabled: false,
     },
   },
   ENTERPRISE: {
@@ -189,6 +189,8 @@ export const SUBSCRIPTION_PLANS = {
     },
   },
 } as const;
+
+export type PlanId = keyof typeof SUBSCRIPTION_PLANS;
 
 export const PAYMENT_METHODS = [
   { value: 'CASH', label: 'Espèces', icon: 'Banknote' },

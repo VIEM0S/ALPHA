@@ -1,4 +1,11 @@
-node_modules/ 
-.next/ 
-.env 
-*.json 
+node_modules/
+.next/
+.env
+.env.local
+# Ne PAS ignorer package.json / tsconfig.json / package-lock.json — un blanket
+# "*.json" les excluait du dépôt et cassait tout build fait depuis un clone frais
+# (Netlify, nouvelle machine, collaborateur). On ignore seulement les JSON
+# vraiment locaux/sensibles ci-dessous si besoin, ex :
+# .vercel/*.json
+# firebase-debug.log
+
