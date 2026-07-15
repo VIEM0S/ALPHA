@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { Store, ArrowRight, Package, ShoppingCart, BarChart3, Shield, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LandingLayout } from '@/components/landing/landing-layout';
+import { PLAN_DISPLAY_LIST } from '@/lib/utils/plan-display';
 
 export default function HomePage() {
   const router = useRouter();
@@ -145,32 +146,7 @@ export default function HomePage() {
           </div>
 
           <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {[
-              {
-                name: 'Starter',
-                price: '25 000',
-                description: 'Pour les petites entreprises',
-                features: ['1 magasin', '3 utilisateurs', '500 produits', 'POS inclus', 'Support email'],
-                cta: 'Commencer',
-                popular: false,
-              },
-              {
-                name: 'Business',
-                price: '75 000',
-                description: 'Pour les entreprises en croissance',
-                features: ['3 magasins', '10 utilisateurs', '5 000 produits', 'Analytics avancés', 'Multi-magasins', 'Support prioritaire'],
-                cta: 'Commencer',
-                popular: true,
-              },
-              {
-                name: 'Enterprise',
-                price: '200 000',
-                description: 'Pour les grandes structures',
-                features: ['Magasins illimités', 'Utilisateurs illimités', 'Produits illimités', 'API accès', 'Formation incluse', 'Support dédié 24/7'],
-                cta: 'Nous contacter',
-                popular: false,
-              },
-            ].map((plan) => (
+            {PLAN_DISPLAY_LIST.map((plan) => (
               <div
                 key={plan.name}
                 className={`rounded-2xl p-8 ${
@@ -186,7 +162,7 @@ export default function HomePage() {
                 )}
                 <h3 className="text-2xl font-bold mb-2">{plan.name}</h3>
                 <div className="mb-4">
-                  <span className="text-4xl font-bold">{plan.price}</span>
+                  <span className="text-4xl font-bold">{plan.price.toLocaleString('fr-FR')}</span>
                   <span className={plan.popular ? 'text-primary-200' : 'text-gray-500'}> FCFA/mois</span>
                 </div>
                 <p className={`mb-6 ${plan.popular ? 'text-primary-200' : 'text-gray-500'}`}>

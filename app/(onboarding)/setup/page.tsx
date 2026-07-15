@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PLAN_DISPLAY_LIST } from '@/lib/utils/plan-display';
 
 const STEPS = [
   { id: 'company', title: 'Informations entreprise', icon: Building2 },
@@ -21,23 +22,11 @@ const STEPS = [
   { id: 'plan',    title: "Plan d'abonnement",         icon: CreditCard },
 ];
 
-const PLANS = [
-  {
-    id: 'STARTER', name: 'Starter', price: 25000,
-    features: ['1 magasin', '3 utilisateurs', '500 produits', 'POS inclus', 'Support email'],
-    recommended: false,
-  },
-  {
-    id: 'BUSINESS', name: 'Business', price: 75000,
-    features: ['3 magasins', '10 utilisateurs', '5 000 produits', 'Analytics avancés', 'Multi-magasins', 'Support prioritaire'],
-    recommended: true,
-  },
-  {
-    id: 'ENTERPRISE', name: 'Enterprise', price: 200000,
-    features: ['Magasins illimités', 'Utilisateurs illimités', 'Produits illimités', 'Accès API', 'Formation incluse', 'Support dédié 24/7'],
-    recommended: false,
-  },
-];
+// Fix : cette page avait sa propre copie en dur des forfaits (retrouvée aussi
+// dans lib/constants/index.ts, app/api/auth/register/route.ts et app/page.tsx).
+// L'affichage vient maintenant de lib/utils/plan-display.ts, lui-même basé sur
+// la source unique SUBSCRIPTION_PLANS.
+const PLANS = PLAN_DISPLAY_LIST;
 
 export default function SetupPage() {
   const router = useRouter();
@@ -149,19 +138,19 @@ export default function SetupPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="md:col-span-2 space-y-2">
                   <Label>Nom de l'entreprise *</Label>
-                  <Input value={company.name} onChange={e => setCompany({...company, name: e.target.value})} placeholder="Ex: Quincaillerie Alpha" />
+                  <Input id="company-name" name="company-name" autoComplete="organization" value={company.name} onChange={e => setCompany({...company, name: e.target.value})} placeholder="Ex: Quincaillerie Alpha" />
                 </div>
                 <div className="space-y-2">
                   <Label>Email professionnel *</Label>
-                  <Input type="email" value={company.email} onChange={e => setCompany({...company, email: e.target.value})} placeholder="contact@entreprise.com" />
+                  <Input id="company-email" name="company-email" type="email" autoComplete="email" value={company.email} onChange={e => setCompany({...company, email: e.target.value})} placeholder="contact@entreprise.com" />
                 </div>
                 <div className="space-y-2">
                   <Label>Téléphone</Label>
-                  <Input value={company.phone} onChange={e => setCompany({...company, phone: e.target.value})} placeholder="+223 70 00 00 00" />
+                  <Input id="company-phone" name="company-phone" type="tel" autoComplete="tel" value={company.phone} onChange={e => setCompany({...company, phone: e.target.value})} placeholder="+223 70 00 00 00" />
                 </div>
                 <div className="space-y-2">
                   <Label>Ville</Label>
-                  <Input value={company.city} onChange={e => setCompany({...company, city: e.target.value})} placeholder="Bamako" />
+                  <Input id="company-city" name="company-city" autoComplete="address-level2" value={company.city} onChange={e => setCompany({...company, city: e.target.value})} placeholder="Bamako" />
                 </div>
                 <div className="space-y-2">
                   <Label>Pays</Label>
@@ -174,6 +163,18 @@ export default function SetupPage() {
                       <SelectItem value="Burkina Faso">Burkina Faso</SelectItem>
                       <SelectItem value="Niger">Niger</SelectItem>
                       <SelectItem value="Guinée">Guinée</SelectItem>
+                      <SelectItem value="Mauritanie">Mauritanie</SelectItem>
+                      <SelectItem value="Bénin">Bénin</SelectItem>
+                      <SelectItem value="Togo">Togo</SelectItem>
+                      <SelectItem value="Ghana">Ghana</SelectItem>
+                      <SelectItem value="Nigeria">Nigeria</SelectItem>
+                      <SelectItem value="Cameroun">Cameroun</SelectItem>
+                      <SelectItem value="Maroc">Maroc</SelectItem>
+                      <SelectItem value="Tunisie">Tunisie</SelectItem>
+                      <SelectItem value="Algérie">Algérie</SelectItem>
+                      <SelectItem value="Turquie">Turquie</SelectItem>
+                      <SelectItem value="France">France</SelectItem>
+                      <SelectItem value="Autre">Autre</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -190,11 +191,11 @@ export default function SetupPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>RCCM</Label>
-                  <Input value={company.rccm} onChange={e => setCompany({...company, rccm: e.target.value})} placeholder="BKO-2024-B-1234" />
+                  <Input id="rccm" name="rccm" autoComplete="off" value={company.rccm} onChange={e => setCompany({...company, rccm: e.target.value})} placeholder="BKO-2024-B-1234" />
                 </div>
                 <div className="space-y-2">
                   <Label>NIF</Label>
-                  <Input value={company.nif} onChange={e => setCompany({...company, nif: e.target.value})} placeholder="123456789" />
+                  <Input id="nif" name="nif" autoComplete="off" value={company.nif} onChange={e => setCompany({...company, nif: e.target.value})} placeholder="123456789" />
                 </div>
               </div>
             )}
@@ -204,23 +205,23 @@ export default function SetupPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="md:col-span-2 space-y-2">
                   <Label>Nom du magasin *</Label>
-                  <Input value={store.name} onChange={e => setStore({...store, name: e.target.value})} placeholder="Ex: Magasin Central" />
+                  <Input id="store-name" name="store-name" autoComplete="off" value={store.name} onChange={e => setStore({...store, name: e.target.value})} placeholder="Ex: Magasin Central" />
                 </div>
                 <div className="space-y-2">
                   <Label>Code magasin</Label>
-                  <Input value={store.code} onChange={e => setStore({...store, code: e.target.value})} placeholder="MCT" maxLength={5} />
+                  <Input id="store-code" name="store-code" autoComplete="off" value={store.code} onChange={e => setStore({...store, code: e.target.value})} placeholder="MCT" maxLength={5} />
                 </div>
                 <div className="space-y-2">
                   <Label>Téléphone</Label>
-                  <Input value={store.phone} onChange={e => setStore({...store, phone: e.target.value})} placeholder="+223 70 00 00 00" />
+                  <Input id="store-phone" name="store-phone" type="tel" autoComplete="tel" value={store.phone} onChange={e => setStore({...store, phone: e.target.value})} placeholder="+223 70 00 00 00" />
                 </div>
                 <div className="space-y-2">
                   <Label>Ville</Label>
-                  <Input value={store.city} onChange={e => setStore({...store, city: e.target.value})} placeholder="Bamako" />
+                  <Input id="store-city" name="store-city" autoComplete="address-level2" value={store.city} onChange={e => setStore({...store, city: e.target.value})} placeholder="Bamako" />
                 </div>
                 <div className="space-y-2">
                   <Label>Adresse</Label>
-                  <Input value={store.address} onChange={e => setStore({...store, address: e.target.value})} placeholder="Rue 123, Quartier..." />
+                  <Input id="store-address" name="store-address" autoComplete="street-address" value={store.address} onChange={e => setStore({...store, address: e.target.value})} placeholder="Rue 123, Quartier..." />
                 </div>
               </div>
             )}
@@ -230,27 +231,27 @@ export default function SetupPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Prénom *</Label>
-                  <Input value={user.firstName} onChange={e => setUser({...user, firstName: e.target.value})} placeholder="Moussa" />
+                  <Input id="firstName" name="firstName" autoComplete="given-name" value={user.firstName} onChange={e => setUser({...user, firstName: e.target.value})} placeholder="Moussa" />
                 </div>
                 <div className="space-y-2">
                   <Label>Nom *</Label>
-                  <Input value={user.lastName} onChange={e => setUser({...user, lastName: e.target.value})} placeholder="Coulibaly" />
+                  <Input id="lastName" name="lastName" autoComplete="family-name" value={user.lastName} onChange={e => setUser({...user, lastName: e.target.value})} placeholder="Coulibaly" />
                 </div>
                 <div className="space-y-2">
                   <Label>Email *</Label>
-                  <Input type="email" value={user.email} onChange={e => setUser({...user, email: e.target.value})} placeholder="vous@exemple.com" />
+                  <Input id="userEmail" name="userEmail" type="email" autoComplete="email" value={user.email} onChange={e => setUser({...user, email: e.target.value})} placeholder="vous@exemple.com" />
                 </div>
                 <div className="space-y-2">
                   <Label>Téléphone</Label>
-                  <Input value={user.phone} onChange={e => setUser({...user, phone: e.target.value})} placeholder="+223 70 00 00 00" />
+                  <Input id="userPhone" name="userPhone" type="tel" autoComplete="tel" value={user.phone} onChange={e => setUser({...user, phone: e.target.value})} placeholder="+223 70 00 00 00" />
                 </div>
                 <div className="space-y-2">
                   <Label>Mot de passe *</Label>
-                  <Input type="password" value={user.password} onChange={e => setUser({...user, password: e.target.value})} placeholder="8 caractères minimum" />
+                  <Input id="password" name="password" type="password" autoComplete="new-password" value={user.password} onChange={e => setUser({...user, password: e.target.value})} placeholder="8 caractères minimum" />
                 </div>
                 <div className="space-y-2">
                   <Label>Confirmer le mot de passe *</Label>
-                  <Input type="password" value={user.confirmPassword} onChange={e => setUser({...user, confirmPassword: e.target.value})} placeholder="••••••••" />
+                  <Input id="confirmPassword" name="confirmPassword" type="password" autoComplete="new-password" value={user.confirmPassword} onChange={e => setUser({...user, confirmPassword: e.target.value})} placeholder="••••••••" />
                   {user.password && user.confirmPassword && user.password !== user.confirmPassword && (
                     <p className="text-xs text-red-500">Les mots de passe ne correspondent pas</p>
                   )}
@@ -269,7 +270,7 @@ export default function SetupPage() {
                       plan === p.id ? 'border-primary-600 bg-primary-50' : 'border-gray-200 hover:border-gray-300'
                     }`}
                   >
-                    {p.recommended && (
+                    {p.popular && (
                       <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary-600 text-white text-xs px-3 py-1 rounded-full">
                         Recommandé
                       </span>
