@@ -89,6 +89,19 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
     --radius: 0.5rem;
+
+    /* shadcn/ui semantic tokens (used by Button, Badge, etc.)
+       These were missing entirely, making every default-variant
+       component transparent/invisible. Mapped onto the existing
+       brand palette above so both systems stay in sync. */
+    --primary: 224 64% 33%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --accent: 25 95% 53%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
   }
 
   * {
