@@ -34,6 +34,10 @@ export interface QueuedSale {
 
 const STORAGE_KEY = 'alpha_pos_offline_queue';
 
+export function generateLocalSaleId(): string {
+  return `offline_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
 function readQueue(): QueuedSale[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -57,9 +61,9 @@ export function getQueue(): QueuedSale[] {
   return readQueue();
 }
 
-export function enqueueSale(payload: QueuedSale['payload'], displayTotal: number): QueuedSale {
+export function enqueueSale(payload: QueuedSale['payload'], displayTotal: number, existingLocalId?: string): QueuedSale {
   const sale: QueuedSale = {
-    localId: `offline_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    localId: existingLocalId || generateLocalSaleId(),
     createdAtLocal: Date.now(),
     payload,
     displayTotal,

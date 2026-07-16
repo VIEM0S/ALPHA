@@ -24,7 +24,7 @@ import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
 import type { Product, Customer } from '@/lib/types';
 import {
-  enqueueSale, getQueue, syncOfflineQueue, type QueuedSale,
+  enqueueSale, getQueue, syncOfflineQueue, generateLocalSaleId, type QueuedSale,
 } from '@/lib/offline-queue';
 
 const PAYMENT_METHODS = [
@@ -220,10 +220,16 @@ export default function POSPage() {
       userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
     };
 
+    // Généré AVANT la tentative réseau : si la requête réussit côté serveur
+    // mais que la réponse se perd (coupure au mauvais moment), on saura que
+    // c'est un rejeu de la même vente réelle plutôt que d'en créer une 2e —
+    // que ce soit en retentant tout de suite ou en tombant dans la file.
+    const attemptId = generateLocalSaleId();
+
     try {
       const res = await fetch('/api/pos/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Offline-Sync-Id': attemptId },
         body: JSON.stringify(checkoutPayload),
       });
       const data = await res.json();
@@ -245,7 +251,7 @@ export default function POSPage() {
       const isNetworkFailure = e instanceof TypeError || (typeof navigator !== 'undefined' && !navigator.onLine);
 
       if (isNetworkFailure) {
-        enqueueSale(checkoutPayload, total);
+        enqueueSale(checkoutPayload, total, attemptId);
         refreshQueue();
         setIsOnline(false);
         setLastSaleId(null);
@@ -273,22 +279,48 @@ export default function POSPage() {
         {/* ── Catalogue ── */}
         <div className="flex-1 flex flex-col gap-3 min-w-0">
           {(!isOnline || pendingQueue.length > 0) && (
-            <div className={`flex items-center justify-between gap-2 rounded-lg px-4 py-2.5 text-sm ${
-              !isOnline ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-blue-50 border border-blue-200 text-blue-800'
+            <div className={`rounded-lg border text-sm ${
+              !isOnline ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-blue-50 border-blue-200 text-blue-800'
             }`}>
-              <div className="flex items-center gap-2">
-                {!isOnline ? <WifiOff className="h-4 w-4 flex-shrink-0" /> : <Wifi className="h-4 w-4 flex-shrink-0" />}
-                <span>
-                  {!isOnline
-                    ? 'Hors connexion — les ventes sont enregistrées localement et se synchroniseront au retour du réseau.'
-                    : `${pendingQueue.length} vente${pendingQueue.length > 1 ? 's' : ''} en attente de synchronisation.`}
-                </span>
+              <div className="flex items-center justify-between gap-2 px-4 py-2.5">
+                <div className="flex items-center gap-2">
+                  {!isOnline ? <WifiOff className="h-4 w-4 flex-shrink-0" /> : <Wifi className="h-4 w-4 flex-shrink-0" />}
+                  <span>
+                    {!isOnline
+                      ? 'Hors connexion — les ventes sont enregistrées localement et se synchroniseront au retour du réseau.'
+                      : `${pendingQueue.length} vente${pendingQueue.length > 1 ? 's' : ''} en attente de synchronisation.`}
+                  </span>
+                </div>
+                {isOnline && pendingQueue.length > 0 && (
+                  <Button size="sm" variant="outline" onClick={runSync} disabled={isSyncing} className="h-7 text-xs">
+                    {isSyncing ? <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> : <CloudUpload className="h-3 w-3 mr-1" />}
+                    Synchroniser
+                  </Button>
+                )}
               </div>
-              {isOnline && pendingQueue.length > 0 && (
-                <Button size="sm" variant="outline" onClick={runSync} disabled={isSyncing} className="h-7 text-xs">
-                  {isSyncing ? <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> : <CloudUpload className="h-3 w-3 mr-1" />}
-                  Synchroniser
-                </Button>
+              {/* Ventes qui n'ont pas pu se synchroniser du tout (rare : produit
+                  supprimé, session expirée...). Le stock insuffisant et le
+                  dépassement de crédit ne bloquent PLUS ici — ils sont acceptés
+                  côté serveur et remontés comme alerte à régulariser. */}
+              {pendingQueue.some(s => s.status === 'ERROR') && (
+                <div className="border-t border-current/20 px-4 py-2 space-y-1.5 bg-red-50 text-red-800 rounded-b-lg">
+                  <p className="text-xs font-medium">
+                    {pendingQueue.filter(s => s.status === 'ERROR').length} vente(s) n'ont pas pu être synchronisées :
+                  </p>
+                  {pendingQueue.filter(s => s.status === 'ERROR').map(s => (
+                    <div key={s.localId} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="truncate">
+                        {formatCurrency(s.displayTotal)} — {s.errorMessage || 'Erreur inconnue'} ({s.attempts} tentative{s.attempts > 1 ? 's' : ''})
+                      </span>
+                      <Button size="sm" variant="ghost" onClick={runSync} disabled={isSyncing} className="h-6 text-xs flex-shrink-0">
+                        Réessayer
+                      </Button>
+                    </div>
+                  ))}
+                  <p className="text-[11px] text-red-700/80">
+                    Signaler à un manager si le problème persiste après plusieurs tentatives.
+                  </p>
+                </div>
               )}
             </div>
           )}

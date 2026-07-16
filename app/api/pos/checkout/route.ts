@@ -19,6 +19,12 @@ export async function POST(request: NextRequest) {
     const callerTenantId = decoded.tenantId as string;
     const callerUid = decoded.uid as string;
 
+    // Identifiant fourni par la file d'attente hors-ligne (lib/offline-queue.ts).
+    // Absent = vente en ligne normale, comportement inchangé. Présent = cette
+    // requête peut être un rejeu (perte de la réponse HTTP après succès côté
+    // serveur) : il ne faut JAMAIS créer deux fois la même vente.
+    const offlineSyncId = request.headers.get('X-Offline-Sync-Id');
+
     const {
       tenantId, storeId, items, customerId,
       paymentMethod, amountReceived, discountPercent,
@@ -34,6 +40,21 @@ export async function POST(request: NextRequest) {
     if (tenantId !== callerTenantId) {
       return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
     }
+
+    // Rejeu idempotent : si cette synchronisation offline a déjà abouti
+    // (réponse perdue la première fois), on renvoie le résultat déjà connu
+    // au lieu de recréer une seconde vente pour le même achat réel.
+    const dedupRef = offlineSyncId
+      ? adminDb.doc(`tenants/${tenantId}/_sync_dedup/${offlineSyncId}`)
+      : null;
+    if (dedupRef) {
+      const dedupSnap = await dedupRef.get();
+      if (dedupSnap.exists) {
+        const prev = dedupSnap.data()!;
+        return NextResponse.json({ success: true, saleId: prev.saleId, reference: prev.reference, replay: true });
+      }
+    }
+
     if (!['CASH', 'MOBILE_MONEY', 'CARD', 'CREDIT'].includes(paymentMethod)) {
       return NextResponse.json({ error: 'Mode de paiement invalide' }, { status: 400 });
     }
@@ -88,15 +109,26 @@ export async function POST(request: NextRequest) {
 
     // Fix : le plafond de crédit du client (customer.creditLimit) n'était jamais
     // vérifié — un client pouvait accumuler une dette illimitée.
+    //
+    // En synchronisation offline (offlineSyncId présent), la vente a DÉJÀ eu
+    // lieu physiquement — le client est reparti avec la marchandise pendant la
+    // coupure réseau. La refuser ici ne l'annule pas, ça la fait juste échouer
+    // silencieusement en boucle dans la file locale. On laisse donc passer et
+    // on signale le dépassement via une alerte pour régularisation manuelle,
+    // au lieu de bloquer une transaction déjà consommée dans le monde réel.
+    let creditConflict = false;
     if (paymentMethod === 'CREDIT' && soldeCredit > 0 && customer) {
       const creditLimit = Number(customer.creditLimit) || 0;
       const creditUsed = Number(customer.creditUsed) || 0;
       if (creditUsed + soldeCredit > creditLimit) {
-        const disponible = Math.max(0, creditLimit - creditUsed);
-        return NextResponse.json(
-          { error: `Plafond de crédit dépassé pour ce client. Crédit disponible : ${disponible} FCFA.` },
-          { status: 400 }
-        );
+        if (!offlineSyncId) {
+          const disponible = Math.max(0, creditLimit - creditUsed);
+          return NextResponse.json(
+            { error: `Plafond de crédit dépassé pour ce client. Crédit disponible : ${disponible} FCFA.` },
+            { status: 400 }
+          );
+        }
+        creditConflict = true;
       }
     }
 
@@ -132,7 +164,7 @@ export async function POST(request: NextRequest) {
     const counterRef = adminDb.doc(`tenants/${tenantId}/_counters/sales_${fiscalYear}`);
 
     // ── Transaction atomique : vérifie + décrémente le stock, crée la vente ─
-    await adminDb.runTransaction(async (tx) => {
+    const { reference, stockConflictProducts } = await adminDb.runTransaction(async (tx) => {
       // ── Toutes les lectures d'abord (obligatoire dans une transaction) ────
       const counterSnap = await tx.get(counterRef);
       const freshQtys: Record<string, number> = {};
@@ -146,12 +178,19 @@ export async function POST(request: NextRequest) {
       const reference = `FAC-${fiscalYear}-${String(nextSeq).padStart(6, '0')}`;
       // ── Puis toutes les écritures ──────────────────────────────────────────
       tx.set(counterRef, { value: nextSeq }, { merge: true });
+      const stockConflictProducts: string[] = [];
       for (const l of lines) {
         const inv = invRefs[l.product.id];
         if (!inv) continue;
         const freshQty = freshQtys[l.product.id];
         if (freshQty < l.quantity) {
-          throw new Error(`Stock insuffisant pour "${l.product.name}" (${freshQty} disponible, ${l.quantity} demandé)`);
+          // Même logique que le plafond de crédit ci-dessus : en sync offline,
+          // la vente a déjà eu lieu physiquement — on ne peut pas la refuser
+          // après coup. On laisse le stock passer en négatif et on le signale.
+          if (!offlineSyncId) {
+            throw new Error(`Stock insuffisant pour "${l.product.name}" (${freshQty} disponible, ${l.quantity} demandé)`);
+          }
+          stockConflictProducts.push(`${l.product.name} (${freshQty} dispo, ${l.quantity} vendu)`);
         }
         tx.update(inv.ref, { quantity: freshQty - l.quantity, updatedAt: FieldValue.serverTimestamp() });
       }
@@ -165,10 +204,36 @@ export async function POST(request: NextRequest) {
         paymentMethod, acompte, soldeCredit,
         amountReceived: receivedCash, change,
         itemCount,
+        stockConflict: stockConflictProducts.length > 0,
+        creditConflict,
+        offlineSyncId: offlineSyncId || null,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
+      if (dedupRef) {
+        tx.set(dedupRef, { saleId: saleRef.id, reference, createdAt: FieldValue.serverTimestamp() });
+      }
+      return { reference, stockConflictProducts };
     });
+
+    // Alerte manager si la synchronisation offline a révélé un dépassement
+    // (stock négatif et/ou crédit dépassé) — la vente reste valide (le client
+    // est déjà reparti avec la marchandise), mais un humain doit régulariser
+    // (réapprovisionner, recontacter le client pour le crédit, etc.)
+    if (stockConflictProducts.length > 0 || creditConflict) {
+      const messages = [
+        ...stockConflictProducts.map(p => `Stock négatif : ${p}`),
+        ...(creditConflict ? [`Plafond de crédit dépassé pour ${customerName || 'ce client'}`] : []),
+      ];
+      await adminDb.collection(`tenants/${tenantId}/alerts`).add({
+        tenantId, type: 'OFFLINE_SYNC_CONFLICT', severity: 'HIGH',
+        title: 'Conflit détecté après synchronisation hors-ligne',
+        message: `Vente ${reference} — ${messages.join(' · ')}`,
+        reference: 'sales', referenceId: saleRef.id,
+        isRead: false, isResolved: false, resolvedBy: null, resolvedAt: null,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
 
     // ── Sous-collections (hors transaction) ──────────────────────────────────
     const batchWrites: Promise<unknown>[] = [];
@@ -255,7 +320,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ success: true, saleId: saleRef.id, total, change });
+    return NextResponse.json({ success: true, saleId: saleRef.id, reference, total, change });
   } catch (error) {
     console.error('POS checkout error:', error);
     const msg = error instanceof Error ? error.message : 'Erreur interne';
