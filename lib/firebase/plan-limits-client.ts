@@ -25,8 +25,9 @@ const RESOURCE_TO_COLLECTION: Record<LimitedResource, string> = {
  */
 export async function checkPlanLimitClient(
   tenantId: string,
-  resource: LimitedResource
-): Promise<{ allowed: true } | { allowed: false; reason: string }> {
+  resource: LimitedResource,
+  count: number = 1
+): Promise<{ allowed: true } | { allowed: false; reason: string; available: number }> {
   const subSnap = await getDoc(doc(db, `tenants/${tenantId}/subscriptions`, tenantId));
   const planId = subSnap.exists() ? (subSnap.data()?.plan as PlanId | undefined) : undefined;
   const plan = planId && planId in SUBSCRIPTION_PLANS ? SUBSCRIPTION_PLANS[planId] : SUBSCRIPTION_PLANS.BUSINESS;
@@ -37,11 +38,15 @@ export async function checkPlanLimitClient(
   const collectionName = RESOURCE_TO_COLLECTION[resource];
   const countSnap = await getCountFromServer(collection(db, tenantCol(tenantId, collectionName)));
   const current = countSnap.data().count;
+  const available = Math.max(0, max - current);
 
-  if (current >= max) {
+  if (current + count > max) {
     return {
       allowed: false,
-      reason: `Limite du forfait ${plan.name} atteinte (${max} ${collectionName} max). Passez à un forfait supérieur pour continuer.`,
+      available,
+      reason: available > 0
+        ? `Le forfait ${plan.name} n'autorise que ${available} ${collectionName} de plus (${max} au total). Réduis ta sélection ou passe à un forfait supérieur.`
+        : `Limite du forfait ${plan.name} déjà atteinte (${max} ${collectionName} max). Passe à un forfait supérieur pour continuer.`,
     };
   }
   return { allowed: true };

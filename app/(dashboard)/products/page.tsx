@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import {
   Plus, Search, Edit, Trash2, Package,
-  AlertTriangle, RefreshCw, X, ChevronDown
+  AlertTriangle, RefreshCw, X, ChevronDown, Upload
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -36,7 +36,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { formatCurrency } from '@/lib/utils/helpers';
 import { useAuthStore } from '@/hooks/store';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   collection, query, orderBy, onSnapshot,
   doc, addDoc, updateDoc, deleteDoc,
@@ -99,6 +99,7 @@ function ProductsPageInner() {
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const searchParams = useSearchParams();
+  const router = useRouter();
 
   // Ouvrir le dialog si ?new=1
   useEffect(() => {
@@ -320,10 +321,16 @@ function ProductsPageInner() {
               )}
             </p>
           </div>
-          <Button onClick={openAdd} className="bg-primary-600 hover:bg-primary-700">
-            <Plus className="h-4 w-4 mr-2" />
-            Nouveau produit
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => router.push('/products/import')}>
+              <Upload className="h-4 w-4 mr-2" />
+              Importer en masse
+            </Button>
+            <Button onClick={openAdd} className="bg-primary-600 hover:bg-primary-700">
+              <Plus className="h-4 w-4 mr-2" />
+              Nouveau produit
+            </Button>
+          </div>
         </div>
 
         {/* Filtres */}
