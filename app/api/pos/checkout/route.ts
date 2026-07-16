@@ -125,9 +125,16 @@ export async function POST(request: NextRequest) {
       ? (customer.customerType === 'BUSINESS' ? customer.companyName : `${customer.firstName || ''} ${customer.lastName || ''}`.trim())
       : null;
 
+    // Numérotation séquentielle légale (SYSCOHADA/OHADA exigent une suite
+    // chronologique sans trou par exercice fiscal — un ID Firestore aléatoire
+    // ne le permet pas). Même pattern de compteur atomique que purchase-orders.
+    const fiscalYear = new Date().getFullYear();
+    const counterRef = adminDb.doc(`tenants/${tenantId}/_counters/sales_${fiscalYear}`);
+
     // ── Transaction atomique : vérifie + décrémente le stock, crée la vente ─
     await adminDb.runTransaction(async (tx) => {
       // ── Toutes les lectures d'abord (obligatoire dans une transaction) ────
+      const counterSnap = await tx.get(counterRef);
       const freshQtys: Record<string, number> = {};
       for (const l of lines) {
         const inv = invRefs[l.product.id];
@@ -135,7 +142,10 @@ export async function POST(request: NextRequest) {
         const fresh = await tx.get(inv.ref);
         freshQtys[l.product.id] = fresh.data()?.quantity || 0;
       }
+      const nextSeq = (counterSnap.exists ? counterSnap.data()!.value : 0) + 1;
+      const reference = `FAC-${fiscalYear}-${String(nextSeq).padStart(6, '0')}`;
       // ── Puis toutes les écritures ──────────────────────────────────────────
+      tx.set(counterRef, { value: nextSeq }, { merge: true });
       for (const l of lines) {
         const inv = invRefs[l.product.id];
         if (!inv) continue;
@@ -147,6 +157,7 @@ export async function POST(request: NextRequest) {
       }
       tx.set(saleRef, {
         tenantId, storeId, userId: callerUid,
+        reference,
         customerId: customerId || null,
         customerName,
         subtotal, discountPercent: cartDiscountPercent, discountAmount, tax: taxTotal, total,

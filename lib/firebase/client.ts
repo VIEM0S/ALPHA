@@ -1,6 +1,11 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import {
+  initializeFirestore,
+  getFirestore,
+  persistentLocalCache,
+  persistentSingleTabManager,
+} from 'firebase/firestore';
 import { getDatabase } from 'firebase/database';
 
 const firebaseConfig = {
@@ -17,7 +22,27 @@ const firebaseConfig = {
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Fix : Firestore n'avait aucun cache local persistant configuré — une
+// coupure réseau (fréquente en boutique) bloquait toute l'appli (plus de
+// lecture ni écriture possible). `persistentLocalCache` garde les dernières
+// données lues en IndexedDB et met en file les écritures pour les rejouer
+// au retour du réseau. `initializeFirestore` doit être appelé une seule fois
+// et avant tout autre usage de Firestore — donc uniquement côté navigateur.
+// `persistentSingleTabManager` : un seul onglet gère le cache à la fois
+// (suffisant pour une caisse, évite la complexité multi-onglets).
+export const db = (() => {
+  if (typeof window === 'undefined') return getFirestore(app);
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentSingleTabManager({}) }),
+    });
+  } catch {
+    // Déjà initialisé (ex: hot-reload Next.js en dev) — récupérer l'instance existante.
+    return getFirestore(app);
+  }
+})();
+
 export const rtdb = getDatabase(app);
 
 export default app;

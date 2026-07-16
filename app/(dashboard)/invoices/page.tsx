@@ -24,7 +24,7 @@ import { generateInvoicePDF } from '@/lib/utils/pdf';
 import type { InvoiceData } from '@/lib/utils/pdf';
 
 interface Sale {
-  id: string; total: number; subtotal: number; status: string;
+  id: string; reference?: string; total: number; subtotal: number; status: string;
   paymentMethod?: string; customerName?: string; customerId?: string;
   discountPercent?: number; discountAmount?: number; tax?: number;
   acompte?: number; soldeCredit?: number; amountReceived?: number; change?: number;
@@ -116,7 +116,7 @@ export default function InvoicesPage() {
 
       const invoiceData: InvoiceData = {
         ...getTenantConfig(),
-        invoiceNumber: `FAC-${sale.id.slice(0, 8).toUpperCase()}`,
+        invoiceNumber: sale.reference || `FAC-LEGACY-${sale.id.slice(0, 8).toUpperCase()}`,
         type: 'FACTURE',
         date: date.toLocaleDateString('fr-FR'),
         customerName: sale.customerName || 'Client comptoir',
@@ -279,7 +279,7 @@ export default function InvoicesPage() {
                     <TableRow key={s.id} className="hover:bg-gray-50">
                       <TableCell>
                         <code className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded font-medium">
-                          FAC-{s.id.slice(0, 8).toUpperCase()}
+                          {s.reference || `FAC-LEGACY-${s.id.slice(0, 8).toUpperCase()}`}
                         </code>
                       </TableCell>
                       <TableCell className="text-sm text-gray-500">{formatDateTime(s.createdAt)}</TableCell>
@@ -377,7 +377,7 @@ export default function InvoicesPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              Aperçu — FAC-{previewSale?.id.slice(0, 8).toUpperCase()}
+              Aperçu — {previewSale?.reference || `FAC-LEGACY-${previewSale?.id.slice(0, 8).toUpperCase()}`}
             </DialogTitle>
           </DialogHeader>
 
