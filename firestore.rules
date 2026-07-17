@@ -20,6 +20,10 @@ service cloud.firestore {
       return role() in ['OWNER', 'ADMIN'];
     }
 
+    function isOwner() {
+      return role() == 'OWNER';
+    }
+
     function isManager() {
       return role() in ['OWNER', 'ADMIN', 'MANAGER'];
     }
@@ -51,7 +55,27 @@ service cloud.firestore {
               request.resource.data.isActive == resource.data.isActive
             )
           );
-        allow create, delete: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+        allow create: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+        // Fix : "delete" était ouvert à isOwnerOrAdmin(), ce qui permettait à un
+        // Admin de supprimer un Manager/Caissier directement depuis le client,
+        // contournant entièrement le workflow de double vérification (demande +
+        // justification + validation du Propriétaire) appliqué côté serveur dans
+        // /api/users/delete. Seul le Propriétaire peut donc supprimer un document
+        // utilisateur directement ; un Admin doit obligatoirement passer par la
+        // route API (qui utilise l'Admin SDK et ignore ces règles).
+        allow delete: if belongsToTenant(tenantId) && isOwner();
+      }
+
+      // ─── Demandes de suppression d'utilisateur (double vérification) ─────────
+      match /user_deletion_requests/{requestId} {
+        // Visible par Owner/Admin (l'Admin doit voir le statut de SA demande).
+        allow read: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+        // Toute écriture passe par l'Admin SDK (/api/users/delete et
+        // /api/users/deletion-requests/respond), qui applique la vraie logique
+        // métier (justification obligatoire, un seul le Propriétaire peut
+        // approuver/rejeter). Le client ne doit jamais pouvoir créer, modifier
+        // ou faire disparaître une demande directement.
+        allow write: if false;
       }
 
       // ─── Stores ────────────────────────────────────────────────────────────
@@ -205,7 +229,16 @@ service cloud.firestore {
       // ─── Alerts ────────────────────────────────────────────────────────────
       match /alerts/{alertId} {
         allow read: if belongsToTenant(tenantId);
-        allow write: if belongsToTenant(tenantId);
+        // Fix : "write" était ouvert à tout employé du tenant, qui pouvait donc
+        // supprimer/modifier n'importe quelle alerte — y compris une alerte
+        // sensible de demande de suppression d'utilisateur. Seule la mise à jour
+        // (marquer lu/résolu) reste permise, réservée à Manager+. La création se
+        // fait via l'Admin SDK (checkout, delete route...) et la suppression n'est
+        // pas permise côté client (les alertes forment une trace, pas un journal
+        // à nettoyer soi-même).
+        allow create: if false;
+        allow update: if belongsToTenant(tenantId) && isManager();
+        allow delete: if false;
       }
 
       // ─── Notifications ─────────────────────────────────────────────────────

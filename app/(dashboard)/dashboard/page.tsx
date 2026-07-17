@@ -7,6 +7,7 @@ import {
   Users, BarChart3, RefreshCw, Clock, CheckCircle2
 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -111,10 +112,19 @@ function getDateStr(daysAgo = 0): string {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { tenant, currentStore, user } = useAuthStore();
   const tenantId = tenant?.id;
   const storeId = currentStore?.id;
   const isManagerPlus = ['OWNER', 'ADMIN', 'MANAGER'].includes(user?.role || '');
+
+  // Fix (demande explicite) : le CA jour/mois est réservé à Manager+. Le menu
+  // et la redirection post-login évitent déjà ce cas, ceci protège contre un
+  // accès direct par URL/favori.
+  useEffect(() => {
+    if (user && !isManagerPlus) router.replace('/pos');
+  }, [user, isManagerPlus, router]);
+
   const { sales, products, inventory, credits, categories, monthlyCostTotal, isLoading } = useDashboardData(tenantId, isManagerPlus);
 
   // ─── Calculs stats ──────────────────────────────────────────────────────────

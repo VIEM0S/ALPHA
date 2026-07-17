@@ -29,7 +29,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { title: 'Tableau de bord', href: '/dashboard', icon: LayoutDashboard },
+  { title: 'Tableau de bord', href: '/dashboard', icon: LayoutDashboard, roles: ['OWNER', 'ADMIN', 'MANAGER'] },
   {
     title: 'Ventes', href: '/sales', icon: ShoppingCart,
     children: [

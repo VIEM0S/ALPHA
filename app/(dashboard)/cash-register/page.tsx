@@ -73,22 +73,36 @@ export default function CashRegisterPage() {
   }, [tenantId, registerId]);
 
   // ─── Ventes du jour (pour calcul attendu) ────────────────────────────────
+  // Fix : ne filtrait ni par magasin ni par session — le solde attendu à la
+  // fermeture mélangeait les ventes de TOUS les magasins du tenant, et
+  // comptait depuis minuit même si la caisse avait été ouverte plus tard dans
+  // la journée. On scope maintenant au magasin courant + à la session en
+  // cours (depuis son ouverture), ce qui est aussi ce qui permet à un
+  // Caissier de ne voir que le total de SA session (ou de la session
+  // partagée en cas de relève), jamais un CA jour/mois consolidé.
   useEffect(() => {
-    if (!tenantId) return;
+    if (!tenantId || !storeId) return;
     const q = query(
       collection(db, tenantCol(tenantId, 'sales')),
+      where('storeId', '==', storeId),
       orderBy('createdAt', 'desc'), limit(200)
     );
     return onSnapshot(q, snap => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Sale[];
-      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-      setTodaySales(all.filter(s => toFirestoreDate(s.createdAt) >= todayStart));
+      const sinceStart = session?.status === 'OPEN' && session.openedAt
+        ? new Date(session.openedAt)
+        : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+      setTodaySales(all.filter(s => toFirestoreDate(s.createdAt) >= sinceStart));
     });
-  }, [tenantId]);
+  }, [tenantId, storeId, session?.status, session?.openedAt]);
 
   // ─── Historique des sessions (Firestore) ──────────────────────────────────
+  // Réservé à Manager+ : un Caissier n'a besoin que du statut de la session en
+  // cours pour ouvrir/fermer son poste, pas de l'historique des clôtures
+  // passées (CA d'autres jours/caissiers/magasins).
+  const canViewHistory = user?.role && ['OWNER', 'ADMIN', 'MANAGER'].includes(user.role);
   useEffect(() => {
-    if (!tenantId) return;
+    if (!tenantId || !storeId || !canViewHistory) { setSessionHistory([]); return; }
     const q = query(
       collection(db, tenantCol(tenantId, 'cash_sessions')),
       orderBy('openedAt', 'desc'), limit(10)
@@ -96,7 +110,7 @@ export default function CashRegisterPage() {
     return onSnapshot(q, snap => {
       setSessionHistory(snap.docs.map(d => ({ id: d.id, data: d.data() as CashSession })));
     });
-  }, [tenantId]);
+  }, [tenantId, storeId, canViewHistory]);
 
   // ─── Calculs ────────────────────────────────────────────────────────────
   const cashSalesToday = todaySales.filter(s => (s.paymentMethod || 'CASH') === 'CASH');
@@ -254,7 +268,7 @@ export default function CashRegisterPage() {
         {/* Résumé du jour */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: "CA aujourd'hui", value: formatCurrency(totalToday), icon: DollarSign, color: 'text-primary-600' },
+            { label: "CA de cette session", value: formatCurrency(totalToday), icon: DollarSign, color: 'text-primary-600' },
             { label: 'Ventes espèces', value: formatCurrency(cashTotal), icon: Banknote, color: 'text-green-600' },
             { label: 'Transactions', value: txCount, icon: TrendingUp, color: 'text-blue-600' },
             { label: 'Ticket moyen', value: txCount > 0 ? formatCurrency(totalToday / txCount) : '—', icon: TrendingUp, color: 'text-purple-600' },
@@ -268,7 +282,8 @@ export default function CashRegisterPage() {
           ))}
         </div>
 
-        {/* Historique des sessions */}
+        {/* Historique des sessions — réservé à Manager+ */}
+        {canViewHistory && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-gray-600" />Historique des sessions</CardTitle>
@@ -315,6 +330,7 @@ export default function CashRegisterPage() {
             )}
           </CardContent>
         </Card>
+        )}
       </div>
 
       {/* Dialog ouverture */}

@@ -5,7 +5,7 @@ import {
   Search, ShoppingCart, Trash2, Plus, Minus,
   User, X, CheckCircle2, RefreshCw, Package,
   CreditCard, Banknote, Smartphone, AlertTriangle,
-  WifiOff, Wifi, CloudUpload
+  WifiOff, Wifi, CloudUpload, Clock
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -272,12 +272,41 @@ export default function POSPage() {
   const displayCustomerName = (c: Customer) =>
     c.customerType === 'BUSINESS' ? c.companyName! : `${c.firstName || ''} ${c.lastName || ''}`.trim();
 
+  // Avertissement doux si hors des horaires habituels de l'utilisateur —
+  // jamais un blocage (certaines boutiques tournent en continu, un horaire
+  // strict casserait leur activité). Recalculé chaque minute.
+  const [outsideHours, setOutsideHours] = useState(false);
+  useEffect(() => {
+    const wh = user?.workingHours;
+    if (!wh?.start || !wh?.end) { setOutsideHours(false); return; }
+    const check = () => {
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const [sh, sm] = wh.start.split(':').map(Number);
+      const [eh, em] = wh.end.split(':').map(Number);
+      const startMin = sh * 60 + sm, endMin = eh * 60 + em;
+      const inRange = startMin <= endMin
+        ? nowMinutes >= startMin && nowMinutes <= endMin
+        : nowMinutes >= startMin || nowMinutes <= endMin; // horaire à cheval sur minuit
+      setOutsideHours(!inRange);
+    };
+    check();
+    const interval = setInterval(check, 60000);
+    return () => clearInterval(interval);
+  }, [user?.workingHours]);
+
   return (
     <DashboardLayout>
       <div className="flex gap-4 h-[calc(100vh-8rem)]">
 
         {/* ── Catalogue ── */}
         <div className="flex-1 flex flex-col gap-3 min-w-0">
+          {outsideHours && (
+            <div className="rounded-lg border bg-slate-50 border-slate-200 text-slate-700 text-sm px-4 py-2 flex items-center gap-2">
+              <Clock className="h-4 w-4 flex-shrink-0" />
+              Tu es en dehors de tes horaires habituels ({user?.workingHours?.start}–{user?.workingHours?.end}). Ceci n'empêche pas de vendre — c'est juste un rappel.
+            </div>
+          )}
           {(!isOnline || pendingQueue.length > 0) && (
             <div className={`rounded-lg border text-sm ${
               !isOnline ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-blue-50 border-blue-200 text-blue-800'

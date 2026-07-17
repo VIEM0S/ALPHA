@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Accès refusé' }, { status: 403 });
     }
 
-    const { tenantId, uid, email, firstName, lastName, phone, role, newPassword } = await request.json();
+    const { tenantId, uid, email, firstName, lastName, phone, role, newPassword, workingHours } = await request.json();
     if (!tenantId || !uid) {
       return NextResponse.json({ error: 'Champs manquants' }, { status: 400 });
     }
@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
     if (email) firestoreUpdate.email = email;
     if (phone !== undefined) firestoreUpdate.phone = phone || null;
     if (role) firestoreUpdate.role = role;
+    if (workingHours !== undefined) firestoreUpdate.workingHours = workingHours;
 
     await userRef.update(firestoreUpdate);
 

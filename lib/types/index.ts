@@ -13,6 +13,7 @@ export interface User {
   lastLoginAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  workingHours?: { start: string; end: string } | null;
 }
 
 export type UserRole = 'SUPER_ADMIN' | 'OWNER' | 'ADMIN' | 'MANAGER' | 'CASHIER';
@@ -300,7 +301,7 @@ export interface Alert {
   createdAt: Date;
 }
 
-export type AlertType = 'LOW_STOCK' | 'OUT_OF_STOCK' | 'OVERDUE_CREDIT' | 'LARGE_DISCOUNT' | 'REFUND' | 'CASH_VARIANCE' | 'FAILED_PAYMENT' | 'SUSPICIOUS_ACTIVITY' | 'OFFLINE_SYNC_CONFLICT';
+export type AlertType = 'LOW_STOCK' | 'OUT_OF_STOCK' | 'OVERDUE_CREDIT' | 'LARGE_DISCOUNT' | 'REFUND' | 'CASH_VARIANCE' | 'FAILED_PAYMENT' | 'SUSPICIOUS_ACTIVITY' | 'OFFLINE_SYNC_CONFLICT' | 'USER_DELETION_REQUEST' | 'USER_DELETION_RESOLVED';
 export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Notification {

@@ -77,7 +77,9 @@ export default function LoginPage() {
         setCurrentStore(data.stores[0]);
       }
 
-      router.push('/dashboard');
+      // Le Caissier n'a pas accès au tableau de bord (CA jour/mois) — il va
+      // directement à son outil de travail quotidien.
+      router.push(data.user?.role === 'CASHIER' ? '/pos' : '/dashboard');
     } catch (err) {
       if ((err as AuthError).code) {
         setError(getFirebaseErrorMessage(err as AuthError));
