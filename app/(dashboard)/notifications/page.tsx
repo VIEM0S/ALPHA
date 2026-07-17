@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import {
   Bell, CheckCircle2, AlertTriangle, CreditCard,
-  Package, ShoppingCart, RefreshCw, Check, Trash2, BellOff
+  Package, ShoppingCart, RefreshCw, Check, Trash2, BellOff, ShieldAlert
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -21,21 +21,27 @@ import { tenantCol } from '@/lib/firebase/collections';
 interface Notification {
   id: string;
   userId?: string;
-  type: 'STOCK_LOW' | 'STOCK_RUPTURE' | 'CREDIT_OVERDUE' | 'CREDIT_DUE_SOON' | 'SALE' | 'SYSTEM';
+  type: 'STOCK_LOW' | 'STOCK_RUPTURE' | 'CREDIT_OVERDUE' | 'CREDIT_DUE_SOON' | 'SALE' | 'SYSTEM'
+    | 'USER_DELETION_REQUEST' | 'USER_DELETION_RESOLVED' | 'OFFLINE_SYNC_CONFLICT' | 'REFUND';
   title: string;
   message: string;
   isRead: boolean;
   link?: string;
   createdAt: unknown;
+  source?: 'derived' | 'firestore'; // firestore = vient de la collection `alerts`, dismiss doit persister
 }
 
 const TYPE_CONFIG: Record<string, { icon: typeof Bell; color: string; bg: string }> = {
-  STOCK_LOW:        { icon: Package,      color: 'text-amber-600', bg: 'bg-amber-100' },
-  STOCK_RUPTURE:     { icon: AlertTriangle,color: 'text-red-600',   bg: 'bg-red-100' },
-  CREDIT_OVERDUE:    { icon: CreditCard,   color: 'text-red-600',   bg: 'bg-red-100' },
-  CREDIT_DUE_SOON:   { icon: CreditCard,   color: 'text-amber-600', bg: 'bg-amber-100' },
-  SALE:              { icon: ShoppingCart, color: 'text-green-600', bg: 'bg-green-100' },
-  SYSTEM:            { icon: Bell,         color: 'text-blue-600',  bg: 'bg-blue-100' },
+  STOCK_LOW:              { icon: Package,      color: 'text-amber-600', bg: 'bg-amber-100' },
+  STOCK_RUPTURE:          { icon: AlertTriangle, color: 'text-red-600',   bg: 'bg-red-100' },
+  CREDIT_OVERDUE:         { icon: CreditCard,    color: 'text-red-600',   bg: 'bg-red-100' },
+  CREDIT_DUE_SOON:        { icon: CreditCard,    color: 'text-amber-600', bg: 'bg-amber-100' },
+  SALE:                   { icon: ShoppingCart,  color: 'text-green-600', bg: 'bg-green-100' },
+  SYSTEM:                 { icon: Bell,          color: 'text-blue-600',  bg: 'bg-blue-100' },
+  USER_DELETION_REQUEST:  { icon: ShieldAlert,   color: 'text-red-600',   bg: 'bg-red-100' },
+  USER_DELETION_RESOLVED: { icon: ShieldAlert,   color: 'text-blue-600',  bg: 'bg-blue-100' },
+  OFFLINE_SYNC_CONFLICT:  { icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-100' },
+  REFUND:                 { icon: CreditCard,    color: 'text-amber-600', bg: 'bg-amber-100' },
 };
 
 // Génère des notifications dérivées en temps réel (sans collection dédiée)
@@ -134,19 +140,84 @@ function useDerivedNotifications(tenantId: string | undefined, storeId: string |
   return { notifications, isLoading };
 }
 
+// Lit la vraie collection `alerts` (écrite côté serveur : demandes de
+// suppression, conflits de synchronisation offline, remboursements...).
+// Fix : ces alertes étaient écrites depuis plusieurs routes API mais
+// n'étaient jamais lues nulle part — un Propriétaire ne voyait donc jamais
+// une demande de suppression en attente dans /notifications.
+function useFirestoreAlerts(tenantId: string | undefined, userRole: string | undefined, currentUserId: string | undefined) {
+  const [alerts, setAlerts] = useState<Notification[]>([]);
+
+  useEffect(() => {
+    if (!tenantId || !userRole) { setAlerts([]); return; }
+    const q = query(
+      collection(db, tenantCol(tenantId, 'alerts')),
+      where('isResolved', '==', false),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+    return onSnapshot(q, snap => {
+      const items: Notification[] = [];
+      snap.docs.forEach(d => {
+        const data = d.data();
+        // Une alerte peut cibler soit un rôle entier (targetRole — ex: toute
+        // demande de suppression va à OWNER), soit un utilisateur précis
+        // (targetUserId — ex: "ta demande a été approuvée" ne doit être vue
+        // QUE par l'Admin qui l'a faite, pas par tout Manager+).
+        const targetRole = data.targetRole as string | undefined;
+        const targetUserId = data.targetUserId as string | undefined;
+        if (targetUserId) {
+          if (targetUserId !== currentUserId) return;
+        } else if (targetRole) {
+          if (targetRole !== userRole) return;
+        } else {
+          const isManagerPlus = ['OWNER', 'ADMIN', 'MANAGER'].includes(userRole);
+          if (!isManagerPlus) return;
+        }
+        if (data.isRead) return;
+        items.push({
+          id: d.id, type: data.type, title: data.title, message: data.message,
+          isRead: !!data.isRead, link: data.reference === 'users' ? '/users' : undefined,
+          createdAt: data.createdAt, source: 'firestore',
+        });
+      });
+      setAlerts(items);
+    });
+  }, [tenantId, userRole, currentUserId]);
+
+  return alerts;
+}
+
 export default function NotificationsPage() {
-  const { tenant, currentStore } = useAuthStore();
+  const { tenant, currentStore, user } = useAuthStore();
   const router = useRouter();
   const tenantId = tenant?.id;
   const storeId = currentStore?.id;
 
-  const { notifications, isLoading } = useDerivedNotifications(tenantId, storeId);
+  const { notifications: derived, isLoading } = useDerivedNotifications(tenantId, storeId);
+  const firestoreAlerts = useFirestoreAlerts(tenantId, user?.role, user?.id);
+  const notifications = [...firestoreAlerts, ...derived];
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
   const visible = notifications.filter(n => !dismissed.has(n.id));
 
-  const dismiss = (id: string) => setDismissed(prev => new Set(prev).add(id));
-  const dismissAll = () => setDismissed(new Set(notifications.map(n => n.id)));
+  const dismiss = (n: Notification) => {
+    setDismissed(prev => new Set(prev).add(n.id));
+    // Les alertes dérivées (stock/crédits) n'existent pas en base — seules
+    // les vraies alertes Firestore doivent être marquées lues pour de bon,
+    // sinon elles réapparaîtraient à chaque rechargement de la page.
+    if (n.source === 'firestore' && tenantId) {
+      updateDoc(doc(db, tenantCol(tenantId, 'alerts'), n.id), { isRead: true }).catch(() => {});
+    }
+  };
+  const dismissAll = () => {
+    setDismissed(new Set(notifications.map(n => n.id)));
+    if (tenantId) {
+      firestoreAlerts.forEach(n => {
+        updateDoc(doc(db, tenantCol(tenantId, 'alerts'), n.id), { isRead: true }).catch(() => {});
+      });
+    }
+  };
 
   const handleClick = (n: Notification) => {
     if (n.link) router.push(n.link);
@@ -196,7 +267,7 @@ export default function NotificationsPage() {
                         <p className="text-sm text-gray-500 mt-0.5">{n.message}</p>
                         <p className="text-xs text-gray-400 mt-1">{formatRelativeTime(n.createdAt)}</p>
                       </div>
-                      <button onClick={() => dismiss(n.id)} className="text-gray-300 hover:text-gray-500 flex-shrink-0">
+                      <button onClick={() => dismiss(n)} className="text-gray-300 hover:text-gray-500 flex-shrink-0">
                         <Check className="h-4 w-4" />
                       </button>
                     </div>

@@ -19,14 +19,22 @@ async function notifyRole(
     createdAt: FieldValue.serverTimestamp(),
   });
 
-  // Notification email à tous les utilisateurs du rôle ciblé
-  const snap = await adminDb.collection(`tenants/${tenantId}/users`)
-    .where('role', '==', targetRole).where('isActive', '==', true).get();
-  await Promise.all(snap.docs.map(d => {
-    const email = d.data().email as string | undefined;
-    if (!email) return Promise.resolve();
-    return sendEmail({ to: email, subject: alert.title, html: `<p>${alert.message}</p>` });
-  }));
+  // Notification email à tous les utilisateurs du rôle ciblé — best-effort :
+  // une erreur ici (SendGrid non configuré, index Firestore manquant...) ne
+  // doit jamais faire échouer la demande de suppression elle-même, puisque
+  // la notification in-app ci-dessus a déjà réussi.
+  try {
+    const snap = await adminDb.collection(`tenants/${tenantId}/users`)
+      .where('role', '==', targetRole).where('isActive', '==', true).get();
+    const results = await Promise.all(snap.docs.map(d => {
+      const email = d.data().email as string | undefined;
+      if (!email) return Promise.resolve({ sent: false, error: 'Pas d\'email sur ce compte' });
+      return sendEmail({ to: email, subject: alert.title, html: `<p>${alert.message}</p>` });
+    }));
+    results.forEach(r => { if (!r.sent) console.error('Notification email non envoyée :', r.error); });
+  } catch (e) {
+    console.error('notifyRole: échec de l\'envoi email (notification in-app déjà créée) :', e);
+  }
 }
 
 async function performDeletion(tenantId: string, uid: string) {

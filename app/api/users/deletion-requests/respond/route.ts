@@ -22,9 +22,16 @@ async function notifyAdmin(tenantId: string, adminUid: string, title: string, me
     isRead: false, isResolved: false, resolvedBy: null, resolvedAt: null,
     createdAt: FieldValue.serverTimestamp(),
   });
-  const adminSnap = await adminDb.doc(`tenants/${tenantId}/users/${adminUid}`).get();
-  const email = adminSnap.data()?.email as string | undefined;
-  if (email) await sendEmail({ to: email, subject: title, html: `<p>${message}</p>` });
+  try {
+    const adminSnap = await adminDb.doc(`tenants/${tenantId}/users/${adminUid}`).get();
+    const email = adminSnap.data()?.email as string | undefined;
+    if (email) {
+      const result = await sendEmail({ to: email, subject: title, html: `<p>${message}</p>` });
+      if (!result.sent) console.error('Notification email non envoyée :', result.error);
+    }
+  } catch (e) {
+    console.error('notifyAdmin: échec de l\'envoi email (notification in-app déjà créée) :', e);
+  }
 }
 
 export async function POST(request: NextRequest) {
