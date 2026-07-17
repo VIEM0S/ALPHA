@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { formatCurrency } from '@/lib/utils/helpers';
+import { generateThermalReceipt, type InvoiceData } from '@/lib/utils/pdf';
 import { useAuthStore, useCartStore } from '@/hooks/store';
 import {
   collection, query, where, orderBy, onSnapshot
@@ -58,6 +59,7 @@ export default function POSPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [lastSaleId, setLastSaleId] = useState<string | null>(null);
+  const [lastReceiptData, setLastReceiptData] = useState<InvoiceData | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   const [customerSearch, setCustomerSearch] = useState('');
@@ -235,7 +237,31 @@ export default function POSPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erreur lors de la finalisation');
 
+      const receipt: InvoiceData = {
+        companyName: tenant?.name || 'ProAlpha',
+        companyPhone: tenant?.phone || undefined,
+        companyAddress: tenant?.address || undefined,
+        companyCity: tenant?.city || undefined,
+        companyRccm: tenant?.rccm || undefined,
+        companyNif: tenant?.nif || undefined,
+        currency: tenant?.currency || 'FCFA',
+        invoiceNumber: data.reference || data.saleId,
+        date: new Date().toLocaleString('fr-FR'),
+        type: 'REÇU',
+        customerName: customer ? displayCustomerName(customer) : 'Client comptoir',
+        customerPhone: customer?.phone || undefined,
+        items: items.map(i => ({
+          description: i.product.name, quantity: i.quantity,
+          unitPrice: i.product.sellingPrice, total: i.product.sellingPrice * i.quantity * (1 - (i.discount || 0) / 100),
+        })),
+        subtotal: total, discountPercent, total,
+        paymentMethod, amountReceived: Number(amountReceived) || total,
+        change: data.change || 0,
+        soldeCredit: paymentMethod === 'CREDIT' ? Math.max(0, total - (Number(amountReceived) || 0)) : undefined,
+      };
+
       setLastSaleId(data.saleId);
+      setLastReceiptData(receipt);
       setWasOfflineSale(false);
       clearCart();
       setAmountReceived('');
@@ -255,6 +281,32 @@ export default function POSPage() {
         refreshQueue();
         setIsOnline(false);
         setLastSaleId(null);
+        setLastReceiptData({
+          companyName: tenant?.name || 'ProAlpha',
+          companyPhone: tenant?.phone || undefined,
+          companyAddress: tenant?.address || undefined,
+          companyCity: tenant?.city || undefined,
+          companyRccm: tenant?.rccm || undefined,
+          companyNif: tenant?.nif || undefined,
+          currency: tenant?.currency || 'FCFA',
+          // Numéro provisoire, clairement distinct du format définitif
+          // FAC-2026-000001 — remplacé par le vrai numéro séquentiel une fois
+          // la vente synchronisée (voir /invoices après reconnexion).
+          invoiceNumber: `PROVISOIRE-${attemptId.slice(-8).toUpperCase()}`,
+          date: new Date().toLocaleString('fr-FR'),
+          type: 'REÇU',
+          customerName: customer ? displayCustomerName(customer) : 'Client comptoir',
+          customerPhone: customer?.phone || undefined,
+          items: items.map(i => ({
+            description: i.product.name, quantity: i.quantity,
+            unitPrice: i.product.sellingPrice, total: i.product.sellingPrice * i.quantity * (1 - (i.discount || 0) / 100),
+          })),
+          subtotal: total, discountPercent, total,
+          paymentMethod, amountReceived: Number(amountReceived) || total,
+          change: Math.max(0, (Number(amountReceived) || total) - total),
+          soldeCredit: paymentMethod === 'CREDIT' ? Math.max(0, total - (Number(amountReceived) || 0)) : undefined,
+          notes: 'Ticket provisoire — vente en attente de synchronisation.',
+        });
         setWasOfflineSale(true);
         clearCart();
         setAmountReceived('');
@@ -669,12 +721,22 @@ export default function POSPage() {
             </h3>
             {wasOfflineSale ? (
               <p className="text-sm text-gray-500 px-2">
-                Le reçu peut être imprimé normalement. Elle sera confirmée dans le système dès le retour de la connexion.
+                Vente enregistrée localement, elle sera confirmée dans le système dès le retour de la connexion. Le ticket imprimé maintenant porte un numéro provisoire.
               </p>
             ) : (
-              lastSaleId && <p className="text-sm text-gray-500 font-mono">N° {lastSaleId.slice(0, 8).toUpperCase()}</p>
+              lastReceiptData && <p className="text-sm text-gray-500 font-mono">N° {lastReceiptData.invoiceNumber}</p>
             )}
-            <Button onClick={() => setShowSuccess(false)} className="mt-6 w-full bg-primary-600 hover:bg-primary-700 h-12 text-lg font-bold">
+            {lastReceiptData && (
+              <div className="flex gap-2 mt-4">
+                <Button variant="outline" className="flex-1" onClick={() => generateThermalReceipt(lastReceiptData, 58)}>
+                  Ticket 58mm
+                </Button>
+                <Button variant="outline" className="flex-1" onClick={() => generateThermalReceipt(lastReceiptData, 80)}>
+                  Ticket 80mm
+                </Button>
+              </div>
+            )}
+            <Button onClick={() => setShowSuccess(false)} className="mt-3 w-full bg-primary-600 hover:bg-primary-700 h-12 text-lg font-bold">
               Nouvelle vente
             </Button>
           </div>

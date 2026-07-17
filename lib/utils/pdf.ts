@@ -274,4 +274,123 @@ export function generateInvoicePDF(data: InvoiceData): void {
   doc.save(filename);
 }
 
+/**
+ * Génère un ticket de caisse au format imprimante thermique de comptoir
+ * (58mm ou 80mm), au lieu du format A4 de generateInvoicePDF ci-dessus.
+ * Une bobine thermique n'a pas de hauteur de page fixe — on calcule donc la
+ * hauteur du document à partir du nombre de lignes réelles à imprimer.
+ */
+export function generateThermalReceipt(data: InvoiceData, widthMm: 58 | 80 = 80): void {
+  const currency = data.currency || 'FCFA';
+  const type = data.type || 'REÇU';
+  const margin = widthMm === 58 ? 3 : 4;
+  const pageW = widthMm;
+  const contentW = pageW - margin * 2;
+
+  // Estimation généreuse du nombre de lignes pour dimensionner la page.
+  // Chaque article prend potentiellement 2 lignes (nom, puis qté/prix/total)
+  // si le nom est long — on compte large plutôt que de risquer de couper.
+  const estimatedLines =
+    10 +                              // en-tête (nom, adresse, tel, RCCM/NIF, séparateur, n°/date)
+    data.items.length * 2 +           // chaque article sur 2 lignes
+    8 +                                // totaux + paiement
+    (data.notes ? 3 : 0) +
+    4;                                 // pied de page
+  const lineHeight = widthMm === 58 ? 4.2 : 4.6;
+  const pageH = Math.max(80, estimatedLines * lineHeight + 20);
+
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [pageW, pageH] });
+  const fontSize = widthMm === 58 ? 7 : 8;
+  const fontSizeSmall = widthMm === 58 ? 6 : 7;
+  let y = 6;
+
+  const center = (text: string, size = fontSize, bold = false) => {
+    doc.setFontSize(size);
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.text(text, pageW / 2, y, { align: 'center' });
+    y += size * 0.5;
+  };
+  const line = () => {
+    doc.setLineDashPattern([0.5, 0.5], 0);
+    doc.setLineWidth(0.2);
+    doc.line(margin, y, pageW - margin, y);
+    y += 3;
+  };
+  const row = (left: string, right: string, size = fontSize, bold = false) => {
+    doc.setFontSize(size);
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.text(left, margin, y);
+    doc.text(right, pageW - margin, y, { align: 'right' });
+    y += size * 0.5 + 1;
+  };
+
+  // ─── En-tête ──────────────────────────────────────────────────────────────
+  center(data.companyName.toUpperCase(), fontSize + 1, true);
+  y += 1;
+  if (data.companyAddress || data.companyCity) {
+    center([data.companyAddress, data.companyCity].filter(Boolean).join(', '), fontSizeSmall);
+  }
+  if (data.companyPhone) center(data.companyPhone, fontSizeSmall);
+  if (data.companyRccm) center(`RCCM: ${data.companyRccm}`, fontSizeSmall);
+  if (data.companyNif) center(`NIF: ${data.companyNif}`, fontSizeSmall);
+  y += 1;
+  line();
+
+  center(type, fontSize, true);
+  center(`N° ${data.invoiceNumber}`, fontSizeSmall);
+  center(data.date, fontSizeSmall);
+  if (data.customerName && data.customerName !== 'Client comptoir') {
+    center(`Client : ${data.customerName}`, fontSizeSmall);
+  }
+  y += 1;
+  line();
+
+  // ─── Articles ─────────────────────────────────────────────────────────────
+  doc.setFont('helvetica', 'normal');
+  data.items.forEach(item => {
+    doc.setFontSize(fontSize);
+    const nameLines = doc.splitTextToSize(item.description, contentW);
+    nameLines.forEach((l: string) => { doc.text(l, margin, y); y += fontSize * 0.5; });
+    row(`  ${item.quantity} x ${formatCFA(item.unitPrice, currency)}`, formatCFA(item.total, currency), fontSizeSmall);
+  });
+  y += 1;
+  line();
+
+  // ─── Totaux ───────────────────────────────────────────────────────────────
+  row('Sous-total', formatCFA(data.subtotal, currency), fontSize);
+  if (data.discountAmount && data.discountAmount > 0) {
+    row(`Remise (${data.discountPercent || 0}%)`, `-${formatCFA(data.discountAmount, currency)}`, fontSizeSmall);
+  }
+  if (data.tax && data.tax > 0) row('TVA', formatCFA(data.tax, currency), fontSize);
+  line();
+  row('TOTAL', formatCFA(data.total, currency), fontSize + 2, true);
+  y += 2;
+
+  if (data.paymentMethod) {
+    row('Paiement', PM_LABELS[data.paymentMethod] || data.paymentMethod, fontSizeSmall);
+    if (data.paymentMethod === 'CASH' && data.amountReceived) {
+      row('Reçu', formatCFA(data.amountReceived, currency), fontSizeSmall);
+      if (data.change) row('Monnaie rendue', formatCFA(data.change, currency), fontSizeSmall, true);
+    }
+    if (data.paymentMethod === 'CREDIT' && data.soldeCredit) {
+      row('Solde en crédit', formatCFA(data.soldeCredit, currency), fontSizeSmall, true);
+    }
+  }
+
+  if (data.notes) {
+    y += 2; line();
+    doc.setFontSize(fontSizeSmall);
+    const noteLines = doc.splitTextToSize(data.notes, contentW);
+    noteLines.forEach((l: string) => { doc.text(l, margin, y); y += fontSizeSmall * 0.5; });
+  }
+
+  // ─── Pied de page ─────────────────────────────────────────────────────────
+  y += 3; line();
+  center('Merci de votre visite !', fontSizeSmall, true);
+  if (data.companyPhone) center(data.companyPhone, fontSizeSmall);
+
+  const filename = `ticket-${data.invoiceNumber.replace(/[^a-z0-9]/gi, '-')}.pdf`;
+  doc.save(filename);
+}
+
 export type { InvoiceData };

@@ -20,7 +20,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { tenantCol } from '@/lib/firebase/collections';
-import { generateInvoicePDF } from '@/lib/utils/pdf';
+import { generateInvoicePDF, generateThermalReceipt } from '@/lib/utils/pdf';
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import type { InvoiceData } from '@/lib/utils/pdf';
 
 interface Sale {
@@ -104,7 +107,7 @@ export default function InvoicesPage() {
     currency: (tenant as unknown as Record<string, string>)?.currency || 'FCFA',
   });
 
-  const generateSaleInvoice = async (sale: Sale) => {
+  const generateSaleInvoice = async (sale: Sale, format: 'A4' | 58 | 80 = 'A4') => {
     if (!tenantId) return;
     setIsGenerating(sale.id);
     try {
@@ -117,7 +120,7 @@ export default function InvoicesPage() {
       const invoiceData: InvoiceData = {
         ...getTenantConfig(),
         invoiceNumber: sale.reference || `FAC-LEGACY-${sale.id.slice(0, 8).toUpperCase()}`,
-        type: 'FACTURE',
+        type: format === 'A4' ? 'FACTURE' : 'REÇU',
         date: date.toLocaleDateString('fr-FR'),
         customerName: sale.customerName || 'Client comptoir',
         items: items.map(i => ({
@@ -137,7 +140,8 @@ export default function InvoicesPage() {
         soldeCredit: sale.soldeCredit,
       };
 
-      generateInvoicePDF(invoiceData);
+      if (format === 'A4') generateInvoicePDF(invoiceData);
+      else generateThermalReceipt(invoiceData, format);
     } catch (e) {
       console.error('PDF error:', e);
       alert('Erreur lors de la génération du PDF');
@@ -292,14 +296,21 @@ export default function InvoicesPage() {
                             onClick={() => openPreview(s)} title="Aperçu">
                             <Eye className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-primary-600"
-                            onClick={() => generateSaleInvoice(s)}
-                            disabled={isGenerating === s.id}
-                            title="Télécharger PDF">
-                            {isGenerating === s.id
-                              ? <RefreshCw className="h-4 w-4 animate-spin" />
-                              : <Download className="h-4 w-4" />}
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-primary-600"
+                                disabled={isGenerating === s.id} title="Télécharger">
+                                {isGenerating === s.id
+                                  ? <RefreshCw className="h-4 w-4 animate-spin" />
+                                  : <Download className="h-4 w-4" />}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => generateSaleInvoice(s, 'A4')}>Facture A4</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => generateSaleInvoice(s, 80)}>Ticket 80mm</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => generateSaleInvoice(s, 58)}>Ticket 58mm</DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -441,15 +452,27 @@ export default function InvoicesPage() {
                 </div>
               </div>
 
-              {/* Bouton télécharger */}
-              <Button
-                onClick={() => { generateSaleInvoice(previewSale); setPreviewSale(null); setPreviewItems([]); }}
-                disabled={isGenerating === previewSale.id}
-                className="w-full bg-primary-600 hover:bg-primary-700">
-                {isGenerating === previewSale.id
-                  ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Génération...</>
-                  : <><Download className="h-4 w-4 mr-2" />Télécharger la facture PDF</>}
-              </Button>
+              {/* Boutons télécharger */}
+              <div className="grid grid-cols-3 gap-2">
+                <Button
+                  onClick={() => { generateSaleInvoice(previewSale, 'A4'); setPreviewSale(null); setPreviewItems([]); }}
+                  disabled={isGenerating === previewSale.id}
+                  className="bg-primary-600 hover:bg-primary-700">
+                  {isGenerating === previewSale.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Facture A4'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => { generateSaleInvoice(previewSale, 80); setPreviewSale(null); setPreviewItems([]); }}
+                  disabled={isGenerating === previewSale.id}>
+                  Ticket 80mm
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => { generateSaleInvoice(previewSale, 58); setPreviewSale(null); setPreviewItems([]); }}
+                  disabled={isGenerating === previewSale.id}>
+                  Ticket 58mm
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
