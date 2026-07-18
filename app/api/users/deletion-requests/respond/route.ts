@@ -4,14 +4,21 @@ import { sendEmail } from '@/lib/email/send';
 import { cookies } from 'next/headers';
 import { FieldValue } from 'firebase-admin/firestore';
 
-async function performDeletion(tenantId: string, uid: string) {
+// Fix (demande explicite) : suppression réversible plutôt que définitive — voir
+// le commentaire détaillé dans app/api/users/delete/route.ts. Même logique ici.
+async function performSoftDelete(tenantId: string, uid: string, deletedBy: string) {
+  await adminAuth.updateUser(uid, { disabled: true });
   try {
-    await adminAuth.deleteUser(uid);
+    await adminAuth.revokeRefreshTokens(uid);
   } catch (e: unknown) {
     const code = (e as { code?: string }).code;
     if (code !== 'auth/user-not-found') throw e;
   }
-  await adminDb.doc(`tenants/${tenantId}/users/${uid}`).delete();
+  await adminDb.doc(`tenants/${tenantId}/users/${uid}`).update({
+    isActive: false,
+    deletedAt: FieldValue.serverTimestamp(),
+    deletedBy,
+  });
 }
 
 async function notifyAdmin(tenantId: string, adminUid: string, title: string, message: string) {
@@ -34,6 +41,8 @@ async function notifyAdmin(tenantId: string, adminUid: string, title: string, me
   }
 }
 
+const VALID_ACTIONS = ['approve', 'reject', 'delete_now', 'revoke_approval'];
+
 export async function POST(request: NextRequest) {
   try {
     const cookieStore = await cookies();
@@ -47,7 +56,7 @@ export async function POST(request: NextRequest) {
     const tenantId = decoded.tenantId as string;
 
     const { requestId, action, note } = await request.json();
-    if (!requestId || !['approve', 'reject', 'delete_now'].includes(action)) {
+    if (!requestId || !VALID_ACTIONS.includes(action)) {
       return NextResponse.json({ error: 'Requête invalide' }, { status: 400 });
     }
 
@@ -55,8 +64,19 @@ export async function POST(request: NextRequest) {
     const reqSnap = await reqRef.get();
     if (!reqSnap.exists) return NextResponse.json({ error: 'Demande introuvable' }, { status: 404 });
     const reqData = reqSnap.data()!;
-    if (reqData.status !== 'PENDING') {
-      return NextResponse.json({ error: 'Cette demande a déjà été traitée' }, { status: 400 });
+
+    // Fix (demande explicite) : une approbation peut être retirée tant que
+    // l'Admin n'a pas encore finalisé — utile si une réconciliation a lieu
+    // entre-temps. 'delete_now' reste possible aussi bien avant qu'après
+    // approbation (le Propriétaire peut toujours trancher lui-même).
+    const allowedFromStatus: Record<string, string[]> = {
+      approve: ['PENDING'],
+      reject: ['PENDING'],
+      revoke_approval: ['APPROVED'],
+      delete_now: ['PENDING', 'APPROVED'],
+    };
+    if (!allowedFromStatus[action].includes(reqData.status)) {
+      return NextResponse.json({ error: 'Cette demande n\'est plus dans un état permettant cette action' }, { status: 400 });
     }
 
     const resolvedByName = decoded.name || decoded.email || decoded.uid;
@@ -74,6 +94,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    if (action === 'revoke_approval') {
+      await reqRef.update({
+        status: 'REJECTED', resolvedBy: decoded.uid, resolvedByName,
+        resolvedAt: FieldValue.serverTimestamp(),
+        resolutionNote: note || 'Approbation retirée avant finalisation.',
+      });
+      await notifyAdmin(
+        tenantId, reqData.requestedBy,
+        'Approbation retirée',
+        `Le Propriétaire est revenu sur son approbation concernant ${reqData.targetUserName} — la suppression n'aura pas lieu.${note ? ` Note : "${note}"` : ''}`
+      );
+      return NextResponse.json({ success: true });
+    }
+
     if (action === 'approve') {
       await reqRef.update({
         status: 'APPROVED', resolvedBy: decoded.uid, resolvedByName,
@@ -87,8 +121,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // action === 'delete_now' : le Propriétaire traite directement, sans repasser par l'Admin
-    await performDeletion(tenantId, reqData.targetUserId);
+    // action === 'delete_now' : le Propriétaire traite directement, sans (ou sans plus) attendre l'Admin
+    await performSoftDelete(tenantId, reqData.targetUserId, decoded.uid);
     await reqRef.update({
       status: 'COMPLETED', resolvedBy: decoded.uid, resolvedByName,
       resolvedAt: FieldValue.serverTimestamp(), resolutionNote: note || null,
@@ -96,7 +130,7 @@ export async function POST(request: NextRequest) {
     await notifyAdmin(
       tenantId, reqData.requestedBy,
       'Suppression traitée directement par le Propriétaire',
-      `Le Propriétaire a supprimé lui-même le compte de ${reqData.targetUserName}. Aucune action supplémentaire n'est nécessaire de votre part.`
+      `Le Propriétaire a désactivé lui-même le compte de ${reqData.targetUserName}. Aucune action supplémentaire n'est nécessaire de votre part.`
     );
     return NextResponse.json({ success: true });
   } catch (error) {

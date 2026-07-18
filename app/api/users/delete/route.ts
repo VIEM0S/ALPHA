@@ -37,14 +37,26 @@ async function notifyRole(
   }
 }
 
-async function performDeletion(tenantId: string, uid: string) {
+// Fix (demande explicite) : une suppression définitive ne laisse aucune place
+// à l'erreur — pas de "deuxième chance" si une réconciliation a lieu entre
+// l'Admin et la personne concernée, pas de retour en arrière possible. On
+// désactive donc le compte au lieu de le détruire : l'accès est bloqué
+// immédiatement (déconnexion forcée, connexion impossible — même effet de
+// sécurité qu'une suppression), mais les données restent et un Propriétaire
+// peut restaurer le compte à tout moment via /api/users/restore.
+async function performSoftDelete(tenantId: string, uid: string, deletedBy: string) {
+  await adminAuth.updateUser(uid, { disabled: true });
   try {
-    await adminAuth.deleteUser(uid);
+    await adminAuth.revokeRefreshTokens(uid);
   } catch (e: unknown) {
     const code = (e as { code?: string }).code;
     if (code !== 'auth/user-not-found') throw e;
   }
-  await adminDb.doc(`tenants/${tenantId}/users/${uid}`).delete();
+  await adminDb.doc(`tenants/${tenantId}/users/${uid}`).update({
+    isActive: false,
+    deletedAt: FieldValue.serverTimestamp(),
+    deletedBy,
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -93,7 +105,7 @@ export async function POST(request: NextRequest) {
     // vérification pour lui (il est le payeur final, personne au-dessus).
     // Transparence : les Admins du tenant sont notifiés après coup.
     if (callerRole === 'OWNER') {
-      await performDeletion(tenantId, uid);
+      await performSoftDelete(tenantId, uid, decoded.uid);
       await notifyRole(tenantId, 'ADMIN', {
         type: 'USER_DELETION_RESOLVED', severity: 'MEDIUM',
         title: 'Suppression effectuée par le Propriétaire',
@@ -117,7 +129,7 @@ export async function POST(request: NextRequest) {
       if (reqData.status !== 'APPROVED') {
         return NextResponse.json({ error: 'Cette demande n\'a pas encore été approuvée par le Propriétaire' }, { status: 400 });
       }
-      await performDeletion(tenantId, uid);
+      await performSoftDelete(tenantId, uid, decoded.uid);
       await reqRef.update({ status: 'COMPLETED', completedAt: FieldValue.serverTimestamp() });
       return NextResponse.json({ success: true });
     }

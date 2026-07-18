@@ -34,6 +34,7 @@ interface UserProfile {
   role: 'OWNER' | 'ADMIN' | 'MANAGER' | 'CASHIER';
   isActive: boolean; lastLoginAt?: string; createdAt: unknown;
   workingHours?: { start: string; end: string } | null;
+  deletedAt?: unknown; deletedBy?: string;
 }
 
 interface DeletionRequest {
@@ -98,7 +99,7 @@ export default function UsersPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [deletionRequests, setDeletionRequests] = useState<DeletionRequest[]>([]);
-  const [respondingTo, setRespondingTo] = useState<{ req: DeletionRequest; action: 'approve' | 'reject' | 'delete_now' } | null>(null);
+  const [respondingTo, setRespondingTo] = useState<{ req: DeletionRequest; action: 'approve' | 'reject' | 'delete_now' | 'revoke_approval' } | null>(null);
   const [responseNote, setResponseNote] = useState('');
   const [isResponding, setIsResponding] = useState(false);
 
@@ -258,6 +259,23 @@ export default function UsersPage() {
     } finally { setIsDeleting(false); }
   };
 
+  const handleRestore = async (u: UserProfile) => {
+    if (!tenantId) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch('/api/users/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId, uid: u.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de la restauration');
+      toast({ title: 'Compte restauré', description: `${u.firstName} ${u.lastName} peut à nouveau se connecter.` });
+    } catch (e) {
+      toast({ title: 'Erreur', description: e instanceof Error ? e.message : 'Erreur interne', variant: 'destructive' });
+    } finally { setIsDeleting(false); }
+  };
+
   const handleFinalizeApproved = async (req: DeletionRequest) => {
     if (!tenantId) return;
     setIsDeleting(true);
@@ -286,7 +304,7 @@ export default function UsersPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erreur');
-      const labels = { approve: 'approuvée', reject: 'refusée', delete_now: 'traitée directement' };
+      const labels = { approve: 'approuvée', reject: 'refusée', delete_now: 'traitée directement', revoke_approval: 'ramenée en attente' };
       toast({ title: 'Demande ' + labels[respondingTo.action], description: `${respondingTo.req.targetUserName}` });
       setRespondingTo(null);
       setResponseNote('');
@@ -330,11 +348,13 @@ export default function UsersPage() {
         {(() => {
           const pendingForOwner = currentUser?.role === 'OWNER'
             ? deletionRequests.filter(r => r.status === 'PENDING') : [];
+          const approvedPendingFinalization = currentUser?.role === 'OWNER'
+            ? deletionRequests.filter(r => r.status === 'APPROVED') : [];
           const approvedForAdmin = currentUser?.role === 'ADMIN'
             ? deletionRequests.filter(r => r.status === 'APPROVED' && r.requestedBy === currentUser?.id) : [];
           const myPending = currentUser?.role === 'ADMIN'
             ? deletionRequests.filter(r => r.status === 'PENDING' && r.requestedBy === currentUser?.id) : [];
-          if (pendingForOwner.length === 0 && approvedForAdmin.length === 0 && myPending.length === 0) return null;
+          if (pendingForOwner.length === 0 && approvedPendingFinalization.length === 0 && approvedForAdmin.length === 0 && myPending.length === 0) return null;
           return (
             <Card className="border-amber-200 bg-amber-50/50">
               <CardHeader className="pb-3">
@@ -362,6 +382,19 @@ export default function UsersPage() {
                         Supprimer moi-même
                       </Button>
                     </div>
+                  </div>
+                ))}
+                {approvedPendingFinalization.map(req => (
+                  <div key={req.id} className="flex items-center justify-between gap-3 bg-white rounded-lg border border-green-200 px-3 py-2.5 text-sm">
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 truncate">
+                        {req.targetUserName} <span className="text-gray-400 font-normal">({req.targetUserRole})</span>
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">Approuvé — en attente que {req.requestedByName} finalise</p>
+                    </div>
+                    <Button size="sm" variant="outline" className="h-7 text-xs flex-shrink-0" onClick={() => setRespondingTo({ req, action: 'revoke_approval' })}>
+                      Retirer l'approbation
+                    </Button>
                   </div>
                 ))}
                 {approvedForAdmin.map(req => (
@@ -442,12 +475,24 @@ export default function UsersPage() {
                       <TableCell><RoleBadge role={u.role} /></TableCell>
                       <TableCell className="text-sm text-gray-500">{u.lastLoginAt ? formatDate(u.lastLoginAt) : 'Jamais'}</TableCell>
                       <TableCell className="text-center">
-                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${u.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                          {u.isActive ? 'Actif' : 'Inactif'}
+                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                          u.deletedAt ? 'bg-red-100 text-red-700' : u.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {u.deletedAt ? 'Supprimé' : u.isActive ? 'Actif' : 'Inactif'}
                         </span>
                       </TableCell>
                       {isOwnerOrAdmin && (
                         <TableCell>
+                          {u.deletedAt ? (
+                            <div className="flex items-center justify-end gap-2">
+                              <span className="text-xs text-gray-400">{formatDate(u.deletedAt)}</span>
+                              {currentUser?.role === 'OWNER' && (
+                                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isDeleting} onClick={() => handleRestore(u)}>
+                                  Restaurer
+                                </Button>
+                              )}
+                            </div>
+                          ) : (
                           <div className="flex items-center justify-end gap-1">
                             {u.role !== 'OWNER' && u.id !== currentUser?.id && (
                               <Switch checked={u.isActive} onCheckedChange={() => toggleActive(u)} />
@@ -463,6 +508,7 @@ export default function UsersPage() {
                               </Button>
                             )}
                           </div>
+                          )}
                         </TableCell>
                       )}
                     </TableRow>
@@ -657,7 +703,7 @@ export default function UsersPage() {
               {deletingUser && currentUser?.role === 'ADMIN' && ['MANAGER', 'CASHIER'].includes(deletingUser.role) ? (
                 <>Le compte de <strong>{deletingUser.firstName} {deletingUser.lastName}</strong> ({deletingUser.email}) ne sera pas supprimé immédiatement : ta demande, avec justification, sera envoyée au Propriétaire pour validation.</>
               ) : deletingUser && (
-                <>Le compte de <strong>{deletingUser.firstName} {deletingUser.lastName}</strong> ({deletingUser.email}) sera définitivement supprimé — accès et connexion révoqués immédiatement. Cette action est irréversible.</>
+                <>Le compte de <strong>{deletingUser.firstName} {deletingUser.lastName}</strong> ({deletingUser.email}) sera désactivé — accès et connexion révoqués immédiatement. Le compte reste restaurable ensuite depuis cette page.</>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -675,7 +721,7 @@ export default function UsersPage() {
             <AlertDialogCancel disabled={isDeleting}>Annuler</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-red-600 hover:bg-red-700">
               {isDeleting ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Traitement...</> :
-                (deletingUser && currentUser?.role === 'ADMIN' && ['MANAGER', 'CASHIER'].includes(deletingUser.role) ? 'Envoyer la demande' : 'Supprimer définitivement')}
+                (deletingUser && currentUser?.role === 'ADMIN' && ['MANAGER', 'CASHIER'].includes(deletingUser.role) ? 'Envoyer la demande' : 'Désactiver le compte')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -688,12 +734,14 @@ export default function UsersPage() {
             <AlertDialogTitle>
               {respondingTo?.action === 'approve' && 'Approuver la demande ?'}
               {respondingTo?.action === 'reject' && 'Refuser la demande ?'}
-              {respondingTo?.action === 'delete_now' && 'Supprimer directement ?'}
+              {respondingTo?.action === 'delete_now' && 'Traiter directement ?'}
+              {respondingTo?.action === 'revoke_approval' && "Retirer l'approbation ?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {respondingTo?.action === 'approve' && <>L'Admin pourra finaliser la suppression de <strong>{respondingTo.req.targetUserName}</strong> depuis sa fiche.</>}
               {respondingTo?.action === 'reject' && <>La demande concernant <strong>{respondingTo.req.targetUserName}</strong> sera classée sans suite.</>}
-              {respondingTo?.action === 'delete_now' && <>Tu supprimes <strong>{respondingTo.req.targetUserName}</strong> toi-même, immédiatement. L'Admin qui a fait la demande sera informé que c'est réglé.</>}
+              {respondingTo?.action === 'delete_now' && <>Le compte de <strong>{respondingTo.req.targetUserName}</strong> sera désactivé immédiatement (connexion bloquée), et restaurable à tout moment depuis la liste des utilisateurs. L'Admin qui a fait la demande sera informé que c'est réglé.</>}
+              {respondingTo?.action === 'revoke_approval' && <>L'approbation pour <strong>{respondingTo.req.targetUserName}</strong> est annulée — {respondingTo.req.requestedByName} ne pourra plus finaliser cette suppression. Utile si une réconciliation a eu lieu entre-temps.</>}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-1.5">
@@ -702,7 +750,7 @@ export default function UsersPage() {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isResponding}>Annuler</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRespondToRequest} disabled={isResponding} className={respondingTo?.action === 'reject' ? '' : 'bg-red-600 hover:bg-red-700'}>
+            <AlertDialogAction onClick={handleRespondToRequest} disabled={isResponding} className={['reject', 'revoke_approval'].includes(respondingTo?.action || '') ? '' : 'bg-red-600 hover:bg-red-700'}>
               {isResponding ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : 'Confirmer'}
             </AlertDialogAction>
           </AlertDialogFooter>
