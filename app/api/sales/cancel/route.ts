@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase/admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { writeAuditLog } from '@/lib/firebase/audit-log';
 import { cookies } from 'next/headers';
 
 // Annule une vente complétée et restaure le stock.
@@ -101,6 +102,11 @@ export async function POST(request: NextRequest) {
         createdAt: FieldValue.serverTimestamp(),
       })
     ));
+
+    await writeAuditLog({
+      tenantId, userId: callerUid, action: 'SALE_CANCELLED',
+      entity: 'sales', entityId: saleId, details: motif.trim(),
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
