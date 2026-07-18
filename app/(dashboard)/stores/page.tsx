@@ -56,6 +56,7 @@ export default function StoresPage() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const isOwnerOrAdmin = ['OWNER', 'ADMIN'].includes(useAuthStore.getState().user?.role || '');
+  const isOwner = useAuthStore.getState().user?.role === 'OWNER';
 
   useEffect(() => {
     if (!tenantId) return;
@@ -192,8 +193,12 @@ export default function StoresPage() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => openEdit(s)}><Edit className="h-4 w-4 mr-2" />Modifier</DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onClick={() => setDeleteTarget(s)} className="text-red-600 focus:text-red-600"><Trash2 className="h-4 w-4 mr-2" />Supprimer</DropdownMenuItem>
+                            {isOwner && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => setDeleteTarget(s)} className="text-red-600 focus:text-red-600"><Trash2 className="h-4 w-4 mr-2" />Supprimer</DropdownMenuItem>
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}

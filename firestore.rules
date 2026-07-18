@@ -93,7 +93,11 @@ service cloud.firestore {
       // ─── Stores ────────────────────────────────────────────────────────────
       match /stores/{storeId} {
         allow read: if belongsToTenant(tenantId);
-        allow write: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+        allow create, update: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+        // Fix (demande explicite) : supprimer un magasin peut couper l'accès à
+        // tout l'historique de produits/ventes/stock qui y est rattaché — trop
+        // sensible pour un simple Admin. Réservé au Propriétaire.
+        allow delete: if belongsToTenant(tenantId) && isOwner();
       }
 
       // ─── Subscriptions ─────────────────────────────────────────────────────
