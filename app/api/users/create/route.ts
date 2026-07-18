@@ -29,6 +29,14 @@ export async function POST(request: NextRequest) {
     if (!['ADMIN', 'MANAGER', 'CASHIER'].includes(role)) {
       return NextResponse.json({ error: 'Rôle invalide' }, { status: 400 });
     }
+    // Fix (demande explicite) : un Admin ne doit pas pouvoir créer un autre
+    // Admin sans contrôle — ça lui permettrait de se fabriquer un compte
+    // "allié" pour contourner la supervision du Propriétaire. Créer un
+    // compte Admin reste réservé au Propriétaire ; l'Admin garde la main sur
+    // Manager/Caissier.
+    if (role === 'ADMIN' && callerRole !== 'OWNER') {
+      return NextResponse.json({ error: 'Seul le Propriétaire peut créer un compte Administrateur' }, { status: 403 });
+    }
 
     // Limite du forfait (fix : les forfaits n'étaient jamais vérifiés nulle part)
     const limitCheck = await checkPlanLimit(tenantId, 'maxUsers');

@@ -46,16 +46,28 @@ service cloud.firestore {
         // mais jamais son propre rôle ou son propre statut actif/inactif —
         // ces deux champs ne peuvent être changés que par un OWNER/ADMIN
         // (vérifié via le claim du token, pas via le document lui-même).
+        // Fix : un Admin pouvait promouvoir n'importe qui en Admin, ou
+        // modifier un Admin existant, directement depuis le client — ça
+        // contournait la restriction ajoutée côté serveur (seul le
+        // Propriétaire accorde/retire le rôle Admin). Un simple Admin ne
+        // peut donc plus toucher un document dont le rôle est ou deviendrait
+        // ADMIN ; le Propriétaire, lui, garde un accès complet.
         allow update: if belongsToTenant(tenantId) &&
           (
-            isOwnerOrAdmin() ||
+            isOwner() ||
+            (
+              isOwnerOrAdmin() &&
+              request.resource.data.role != 'ADMIN' &&
+              resource.data.role != 'ADMIN'
+            ) ||
             (
               request.auth.uid == userId &&
               request.resource.data.role == resource.data.role &&
               request.resource.data.isActive == resource.data.isActive
             )
           );
-        allow create: if belongsToTenant(tenantId) && isOwnerOrAdmin();
+        allow create: if belongsToTenant(tenantId) &&
+          (isOwner() || (isOwnerOrAdmin() && request.resource.data.role != 'ADMIN'));
         // Fix : "delete" était ouvert à isOwnerOrAdmin(), ce qui permettait à un
         // Admin de supprimer un Manager/Caissier directement depuis le client,
         // contournant entièrement le workflow de double vérification (demande +

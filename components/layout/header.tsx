@@ -17,13 +17,17 @@ export function Header() {
   const [storeDropdownOpen, setStoreDropdownOpen] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
 
-  // Badge live — stock faible + crédits en retard
+  // Badge live — stock faible + crédits en retard + vraies alertes
+  // (demandes de suppression, conflits de synchro offline...). Fix : ce badge
+  // ne comptait jamais ces dernières, donc ni l'Admin ni le Propriétaire
+  // n'avaient d'indicateur visible sans aller cliquer sur /notifications.
   useEffect(() => {
     const tenantId = tenant?.id;
     if (!tenantId) return;
     let low = 0;
     let overdue = 0;
-    const update = () => setAlertCount(low + overdue);
+    let realAlerts = 0;
+    const update = () => setAlertCount(low + overdue + realAlerts);
 
     const unsubC = onSnapshot(
       query(collection(db, tenantCol(tenantId, 'credits')), where('status', '==', 'OVERDUE')),
@@ -40,8 +44,24 @@ export function Header() {
       }).length;
       update();
     });
-    return () => { unsubC(); unsubI(); };
-  }, [tenant?.id, currentStore?.id]);
+    const unsubA = onSnapshot(
+      query(collection(db, tenantCol(tenantId, 'alerts')), where('isResolved', '==', false)),
+      snap => {
+        const userRole = user?.role;
+        const userId = user?.id;
+        realAlerts = snap.docs.filter(d => {
+          const data = d.data();
+          if (data.isRead) return false;
+          if (data.targetUserId) return data.targetUserId === userId;
+          if (data.targetRole) return data.targetRole === userRole;
+          return ['OWNER', 'ADMIN', 'MANAGER'].includes(userRole || '');
+        }).length;
+        update();
+      },
+      () => { /* index manquant ou permission — ne bloque pas le reste du badge */ }
+    );
+    return () => { unsubC(); unsubI(); unsubA(); };
+  }, [tenant?.id, currentStore?.id, user?.role, user?.id]);
 
   const initials = `${user?.firstName?.charAt(0) || ''}${user?.lastName?.charAt(0) || ''}`;
 

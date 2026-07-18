@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase/admin';
+import { writeAuditLog } from '@/lib/firebase/audit-log';
 import { cookies } from 'next/headers';
 
 export async function POST(request: NextRequest) {
@@ -38,6 +39,19 @@ export async function POST(request: NextRequest) {
     if (role && !['ADMIN', 'MANAGER', 'CASHIER'].includes(role)) {
       return NextResponse.json({ error: 'Rôle invalide' }, { status: 400 });
     }
+    // Fix (demande explicite) : même logique qu'à la création — un Admin ne
+    // doit pas pouvoir promouvoir quelqu'un (ni lui-même en théorie, déjà
+    // bloqué ailleurs) au rang d'Admin, ni modifier un compte Admin existant
+    // (y compris son propre rôle, déjà interdit par ailleurs). Seul le
+    // Propriétaire accorde ou retire le niveau Admin.
+    if (callerRole !== 'OWNER') {
+      if (role === 'ADMIN') {
+        return NextResponse.json({ error: 'Seul le Propriétaire peut promouvoir un compte au rang d\'Administrateur' }, { status: 403 });
+      }
+      if (existing?.role === 'ADMIN') {
+        return NextResponse.json({ error: 'Seul le Propriétaire peut modifier un compte Administrateur' }, { status: 403 });
+      }
+    }
     if (newPassword && newPassword.length < 6) {
       return NextResponse.json({ error: 'Mot de passe : 6 caractères minimum' }, { status: 400 });
     }
@@ -64,6 +78,11 @@ export async function POST(request: NextRequest) {
     // 2. Mettre à jour les custom claims si le rôle change
     if (role && role !== existing?.role) {
       await adminAuth.setCustomUserClaims(uid, { tenantId, role });
+      await writeAuditLog({
+        tenantId, userId: decoded.uid, action: 'ROLE_CHANGED',
+        entity: 'users', entityId: uid,
+        details: `${existing?.role || '?'} → ${role}`,
+      });
     }
 
     // 3. Mettre à jour le profil Firestore

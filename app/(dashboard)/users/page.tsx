@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Plus, User, Shield, RefreshCw, Eye, EyeOff,
   CheckCircle2, XCircle, Crown, UserCheck, AlertCircle,
-  Pencil, Trash2, ShieldAlert, Check, X, Clock
+  Pencil, Trash2, ShieldAlert, Check, X, Clock, Activity
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -74,6 +75,7 @@ const EMPTY_EDIT_FORM: EditForm = {
 };
 
 export default function UsersPage() {
+  const router = useRouter();
   const { tenant, user: currentUser } = useAuthStore();
   const tenantId = tenant?.id;
   const { toast } = useToast();
@@ -259,6 +261,25 @@ export default function UsersPage() {
     } finally { setIsDeleting(false); }
   };
 
+  const handlePurge = async () => {
+    if (!tenantId || !purgingUser) return;
+    setIsPurging(true);
+    try {
+      const res = await fetch('/api/users/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId, uid: purgingUser.id, confirmName: purgeConfirmText }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de la purge');
+      toast({ title: 'Compte purgé définitivement', description: `${purgingUser.firstName} ${purgingUser.lastName} a été effacé — cette action ne peut plus être annulée.` });
+      setPurgingUser(null);
+      setPurgeConfirmText('');
+    } catch (e) {
+      toast({ title: 'Erreur', description: e instanceof Error ? e.message : 'Erreur interne', variant: 'destructive' });
+    } finally { setIsPurging(false); }
+  };
+
   const handleRestore = async (u: UserProfile) => {
     if (!tenantId) return;
     setIsDeleting(true);
@@ -276,6 +297,28 @@ export default function UsersPage() {
     } finally { setIsDeleting(false); }
   };
 
+  const [purgingUser, setPurgingUser] = useState<UserProfile | null>(null);
+  const [purgeConfirmText, setPurgeConfirmText] = useState('');
+  const [isPurging, setIsPurging] = useState(false);
+
+  const [isCancellingRequest, setIsCancellingRequest] = useState(false);
+
+  const handleCancelOwnRequest = async (req: DeletionRequest) => {
+    setIsCancellingRequest(true);
+    try {
+      const res = await fetch('/api/users/deletion-requests/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: req.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur');
+      toast({ title: 'Demande retirée', description: `Ta demande concernant ${req.targetUserName} a été annulée.` });
+    } catch (e) {
+      toast({ title: 'Erreur', description: e instanceof Error ? e.message : 'Erreur interne', variant: 'destructive' });
+    } finally { setIsCancellingRequest(false); }
+  };
+
   const handleFinalizeApproved = async (req: DeletionRequest) => {
     if (!tenantId) return;
     setIsDeleting(true);
@@ -287,7 +330,7 @@ export default function UsersPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erreur lors de la suppression');
-      toast({ title: 'Utilisateur supprimé', description: `${req.targetUserName} a été retiré du compte.` });
+      toast({ title: 'Compte désactivé', description: `${req.targetUserName} a été désactivé (restaurable depuis la liste).` });
     } catch (e) {
       toast({ title: 'Erreur', description: e instanceof Error ? e.message : 'Erreur interne', variant: 'destructive' });
     } finally { setIsDeleting(false); }
@@ -314,6 +357,7 @@ export default function UsersPage() {
   };
 
   const isOwnerOrAdmin = ['OWNER', 'ADMIN'].includes(currentUser?.role || '');
+  const isManagerPlus = ['OWNER', 'ADMIN', 'MANAGER'].includes(currentUser?.role || '');
 
   const byRole = (role: string) => users.filter(u => u.role === role);
 
@@ -402,15 +446,25 @@ export default function UsersPage() {
                     <p className="text-gray-900">
                       <strong>{req.targetUserName}</strong> — approuvé par le Propriétaire, tu peux finaliser
                     </p>
-                    <Button size="sm" className="h-7 text-xs bg-red-600 hover:bg-red-700" disabled={isDeleting} onClick={() => handleFinalizeApproved(req)}>
-                      Finaliser la suppression
-                    </Button>
+                    <div className="flex gap-1.5">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs text-gray-500" disabled={isCancellingRequest} onClick={() => handleCancelOwnRequest(req)}>
+                        Annuler
+                      </Button>
+                      <Button size="sm" className="h-7 text-xs bg-red-600 hover:bg-red-700" disabled={isDeleting} onClick={() => handleFinalizeApproved(req)}>
+                        Finaliser la suppression
+                      </Button>
+                    </div>
                   </div>
                 ))}
                 {myPending.map(req => (
-                  <div key={req.id} className="flex items-center gap-2 text-sm text-gray-600 px-3 py-2">
-                    <Clock className="h-3.5 w-3.5 flex-shrink-0" />
-                    Demande pour <strong className="mx-1">{req.targetUserName}</strong> en attente de validation du Propriétaire.
+                  <div key={req.id} className="flex items-center justify-between gap-2 text-sm text-gray-600 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+                      Demande pour <strong className="mx-1">{req.targetUserName}</strong> en attente de validation du Propriétaire.
+                    </div>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs text-gray-500" disabled={isCancellingRequest} onClick={() => handleCancelOwnRequest(req)}>
+                      Retirer ma demande
+                    </Button>
                   </div>
                 ))}
               </CardContent>
@@ -453,7 +507,7 @@ export default function UsersPage() {
                     <TableHead>Rôle</TableHead>
                     <TableHead>Dernière connexion</TableHead>
                     <TableHead className="text-center">Statut</TableHead>
-                    {isOwnerOrAdmin && <TableHead className="w-36 text-right">Actions</TableHead>}
+                    {isManagerPlus && <TableHead className="w-36 text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -481,28 +535,36 @@ export default function UsersPage() {
                           {u.deletedAt ? 'Supprimé' : u.isActive ? 'Actif' : 'Inactif'}
                         </span>
                       </TableCell>
-                      {isOwnerOrAdmin && (
+                      {isManagerPlus && (
                         <TableCell>
                           {u.deletedAt ? (
                             <div className="flex items-center justify-end gap-2">
                               <span className="text-xs text-gray-400">{formatDate(u.deletedAt)}</span>
                               {currentUser?.role === 'OWNER' && (
-                                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isDeleting} onClick={() => handleRestore(u)}>
-                                  Restaurer
-                                </Button>
+                                <>
+                                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isDeleting} onClick={() => handleRestore(u)}>
+                                    Restaurer
+                                  </Button>
+                                  <Button size="sm" variant="ghost" className="h-7 text-xs text-red-500 hover:text-red-700" onClick={() => setPurgingUser(u)}>
+                                    Purger
+                                  </Button>
+                                </>
                               )}
                             </div>
                           ) : (
                           <div className="flex items-center justify-end gap-1">
-                            {u.role !== 'OWNER' && u.id !== currentUser?.id && (
+                            <Button variant="ghost" size="icon" className="h-8 w-8" title="Voir l'activité" onClick={() => router.push(`/users/${u.id}/activity`)}>
+                              <Activity className="h-4 w-4 text-gray-400" />
+                            </Button>
+                            {isOwnerOrAdmin && u.role !== 'OWNER' && u.id !== currentUser?.id && (
                               <Switch checked={u.isActive} onCheckedChange={() => toggleActive(u)} />
                             )}
-                            {u.role !== 'OWNER' && (
+                            {isOwnerOrAdmin && u.role !== 'OWNER' && (
                               <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleOpenEdit(u)}>
                                 <Pencil className="h-4 w-4 text-gray-500" />
                               </Button>
                             )}
-                            {u.role !== 'OWNER' && u.id !== currentUser?.id && !(currentUser?.role === 'ADMIN' && u.role === 'ADMIN') && (
+                            {isOwnerOrAdmin && u.role !== 'OWNER' && u.id !== currentUser?.id && !(currentUser?.role === 'ADMIN' && u.role === 'ADMIN') && (
                               <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setDeletingUser(u)}>
                                 <Trash2 className="h-4 w-4 text-red-500" />
                               </Button>
@@ -752,6 +814,39 @@ export default function UsersPage() {
             <AlertDialogCancel disabled={isResponding}>Annuler</AlertDialogCancel>
             <AlertDialogAction onClick={handleRespondToRequest} disabled={isResponding} className={['reject', 'revoke_approval'].includes(respondingTo?.action || '') ? '' : 'bg-red-600 hover:bg-red-700'}>
               {isResponding ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : 'Confirmer'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {/* Purge définitive — confirmation renforcée */}
+      <AlertDialog open={!!purgingUser} onOpenChange={(open) => { if (!open) { setPurgingUser(null); setPurgeConfirmText(''); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-700">Purger définitivement ce compte ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {purgingUser && (
+                <>
+                  Contrairement à la désactivation, cette action <strong>ne peut pas être annulée</strong> — le profil de{' '}
+                  <strong>{purgingUser.firstName} {purgingUser.lastName}</strong> sera effacé définitivement. Son historique de ventes et transactions passées reste conservé séparément (non affecté).
+                  <br /><br />
+                  Pour confirmer, tape son nom complet : <strong>{purgingUser.firstName} {purgingUser.lastName}</strong>
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            value={purgeConfirmText}
+            onChange={e => setPurgeConfirmText(e.target.value)}
+            placeholder="Nom complet exact"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPurging}>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handlePurge}
+              disabled={isPurging || !purgingUser || purgeConfirmText.trim().toLowerCase() !== `${purgingUser.firstName} ${purgingUser.lastName}`.trim().toLowerCase()}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isPurging ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : 'Purger définitivement'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
