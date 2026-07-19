@@ -1,5 +1,6 @@
 "use client";
 
+import { ContactSection } from "@/components/landing/contact-section";
 import { LandingLayout } from "@/components/landing/landing-layout";
 import { Button } from "@/components/ui/button";
 import { PLAN_DISPLAY_LIST } from "@/lib/utils/plan-display";
@@ -82,7 +83,7 @@ export default function HomePage() {
       </section>
 
       {/* Features Section */}
-      <section className="py-20 bg-white">
+      <section id="features" className="py-20 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
@@ -150,7 +151,7 @@ export default function HomePage() {
       </section>
 
       {/* Pricing Section */}
-      <section className="py-20 bg-gray-50">
+      <section id="pricing" className="py-20 bg-gray-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
@@ -165,10 +166,10 @@ export default function HomePage() {
             {PLAN_DISPLAY_LIST.map((plan) => (
               <div
                 key={plan.name}
-                className={`rounded-2xl p-8 ${
+                className={`rounded-2xl p-8 transition-all ${
                   plan.popular
-                    ? "bg-primary-600 text-white ring-4 ring-primary-600 ring-offset-4"
-                    : "bg-white border border-gray-200"
+                    ? "bg-primary-600 text-white ring-4 ring-primary-600 ring-offset-4 hover:shadow-xl"
+                    : "bg-white border border-gray-200 hover:border-gray-300 hover:shadow-lg"
                 }`}
               >
                 {plan.popular && (
@@ -221,7 +222,15 @@ export default function HomePage() {
                       ? "bg-white text-primary-600 hover:bg-gray-100"
                       : "bg-primary-600 text-white hover:bg-primary-700"
                   }`}
-                  onClick={() => router.push("/setup")}
+                  onClick={() => {
+                    if (plan.id === "ENTERPRISE") {
+                      document
+                        .getElementById("contact")
+                        ?.scrollIntoView({ behavior: "smooth" });
+                    } else {
+                      router.push("/setup");
+                    }
+                  }}
                 >
                   {plan.cta}
                 </Button>
@@ -251,6 +260,9 @@ export default function HomePage() {
           </Button>
         </div>
       </section>
+
+      {/* Contact Section */}
+      <ContactSection />
 
       {/* Footer */}
       <footer className="bg-gray-900 py-12">

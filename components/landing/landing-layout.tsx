@@ -57,13 +57,13 @@ export function LandingLayout({ children }: { children: React.ReactNode }) {
         {mobileMenuOpen && (
           <div className="md:hidden bg-white border-b border-gray-100">
             <div className="px-4 py-4 space-y-3">
-              <a href="#features" className="block text-sm font-medium text-gray-600 hover:text-gray-900">
+              <a href="#features" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-gray-600 hover:text-gray-900">
                 Fonctionnalités
               </a>
-              <a href="#pricing" className="block text-sm font-medium text-gray-600 hover:text-gray-900">
+              <a href="#pricing" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-gray-600 hover:text-gray-900">
                 Tarifs
               </a>
-              <a href="#contact" className="block text-sm font-medium text-gray-600 hover:text-gray-900">
+              <a href="#contact" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-gray-600 hover:text-gray-900">
                 Contact
               </a>
               <div className="pt-3 border-t border-gray-100 space-y-2">

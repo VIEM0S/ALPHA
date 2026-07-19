@@ -1,0 +1,63 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { sendEmail } from '@/lib/email/send';
+
+// Endpoint public (pas d'auth) pour le formulaire de contact de la landing
+// page. Envoie un email via SendGrid à l'adresse configurée dans
+// CONTACT_FORM_TO_EMAIL (à défaut, SENDGRID_FROM_EMAIL). Tant qu'aucune de
+// ces deux variables n'est renseignée, sendEmail() renvoie { sent: false }
+// sans lever d'erreur — on répond alors 503 pour que le formulaire affiche
+// clairement "indisponible pour le moment" plutôt qu'un faux succès.
+export async function POST(request: NextRequest) {
+  try {
+    const { name, email, message }: { name?: string; email?: string; message?: string } =
+      await request.json();
+
+    if (!name?.trim() || !email?.trim() || !message?.trim()) {
+      return NextResponse.json({ error: 'Nom, email et message sont requis' }, { status: 400 });
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return NextResponse.json({ error: 'Adresse email invalide' }, { status: 400 });
+    }
+
+    const toEmail = process.env.CONTACT_FORM_TO_EMAIL || process.env.SENDGRID_FROM_EMAIL;
+    if (!toEmail) {
+      return NextResponse.json(
+        { error: "Le formulaire de contact n'est pas encore configuré (CONTACT_FORM_TO_EMAIL manquant)." },
+        { status: 503 }
+      );
+    }
+
+    const result = await sendEmail({
+      to: toEmail,
+      subject: `[ProAlpha ERP] Nouveau message de contact — ${name.trim()}`,
+      html: `
+        <p><strong>Nom :</strong> ${escapeHtml(name.trim())}</p>
+        <p><strong>Email :</strong> ${escapeHtml(email.trim())}</p>
+        <p><strong>Message :</strong></p>
+        <p>${escapeHtml(message.trim()).replace(/\n/g, '<br/>')}</p>
+      `,
+    });
+
+    if (!result.sent) {
+      console.error('Contact form email error:', result.error);
+      return NextResponse.json({ error: "Échec de l'envoi, réessayez plus tard." }, { status: 502 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Contact form route error:', error);
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+  }
+}
+
+// Échappement HTML minimal (pas de dépendance ajoutée) pour éviter toute
+// injection dans l'email HTML envoyé à partir d'un input public non authentifié.
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
