@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 export interface ParsedProductRow {
   rowIndex: number; // 1-based, pour affichage humain (ligne du fichier)
@@ -55,6 +55,33 @@ function parseNumber(raw: unknown): number {
   const cleaned = String(raw).replace(/[^\d.,-]/g, '').replace(',', '.');
   const n = parseFloat(cleaned);
   return Number.isFinite(n) ? n : NaN;
+}
+
+function textToRows(text: string): string[][] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const lines = trimmed.split(/\r?\n/);
+  // Excel copie toujours en tabulations ; on ne bascule sur la virgule que si
+  // aucune tabulation n'est présente sur la ligne d'en-tête (cas CSV).
+  const delimiter = lines[0].includes('\t') ? '\t' : ',';
+  return lines.map(line => line.split(delimiter).map(cell => cell.trim()));
+}
+
+// Convertit une valeur de cellule ExcelJS (qui peut être un texte enrichi,
+// une formule, une date, etc.) en primitive simple exploitable par
+// rowsToProducts, qui attend des string/number/null.
+function cellToPrimitive(v: ExcelJS.CellValue): string | number | null {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === 'object') {
+    if ('result' in v) return cellToPrimitive((v as { result: ExcelJS.CellValue }).result); // formule
+    if ('text' in v) return String((v as { text: unknown }).text); // hyperlien
+    if ('richText' in v) {
+      return (v as { richText: Array<{ text: string }> }).richText.map(r => r.text).join('');
+    }
+    return String(v);
+  }
+  return v as string | number;
 }
 
 function rowsToProducts(rows: unknown[][]): ParsedProductRow[] {
@@ -128,34 +155,63 @@ function rowsToProducts(rows: unknown[][]): ParsedProductRow[] {
   });
 }
 
-/** Parse un fichier .xlsx, .xls ou .csv */
+/** Parse un fichier .xlsx ou .csv (le legacy .xls binaire n'est pas pris en charge, voir message d'erreur) */
 export async function parseProductFile(file: File): Promise<ParsedProductRow[]> {
+  const fileName = file.name.toLowerCase();
+
+  if (fileName.endsWith('.csv')) {
+    const text = await file.text();
+    return rowsToProducts(textToRows(text));
+  }
+
+  if (fileName.endsWith('.xls') && !fileName.endsWith('.xlsx')) {
+    // Format Excel 97-2003 (binaire, pas le format .xlsx moderne basé sur
+    // zip/XML) : la bibliothèque qui le lisait (xlsx/SheetJS) portait deux
+    // vulnérabilités connues non corrigées côté npm — on ne le prend plus en
+    // charge plutôt que de réintroduire ce risque pour un format devenu rare.
+    throw new Error(
+      `Le format .xls (Excel 97-2003) n'est plus pris en charge. Dans Excel, utilise ` +
+      `"Fichier → Enregistrer sous" → "Classeur Excel (.xlsx)", ou exporte en .csv, puis réimporte le fichier.`
+    );
+  }
+
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array' });
-  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1, blankrows: false });
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.load(buffer);
+  } catch {
+    throw new Error(`Fichier illisible. Vérifie qu'il s'agit bien d'un fichier .xlsx ou .csv valide.`);
+  }
+
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) throw new Error('Le fichier ne contient aucune feuille de calcul.');
+
+  const rows: unknown[][] = [];
+  worksheet.eachRow({ includeEmpty: false }, (row) => {
+    // row.values est un tableau sparse indexé à partir de 1 en ExcelJS
+    // (l'index 0 est toujours vide) — on le réaligne sur une base 0.
+    const raw = row.values as ExcelJS.CellValue[];
+    rows.push(raw.slice(1).map(cellToPrimitive));
+  });
+
   return rowsToProducts(rows);
 }
 
 /** Parse du texte collé depuis Excel (délimité par tabulations) ou un CSV collé (virgules) */
 export function parsePastedText(text: string): ParsedProductRow[] {
-  const trimmed = text.trim();
-  if (!trimmed) return [];
-  const lines = trimmed.split(/\r?\n/);
-  // Excel copie toujours en tabulations ; on ne bascule sur la virgule que si
-  // aucune tabulation n'est présente sur la ligne d'en-tête (cas CSV collé).
-  const delimiter = lines[0].includes('\t') ? '\t' : ',';
-  const rows = lines.map(line => line.split(delimiter).map(cell => cell.trim()));
-  return rowsToProducts(rows);
+  return rowsToProducts(textToRows(text));
 }
 
 /** Modèle d'exemple à télécharger, pour que l'utilisateur sache quel format préparer */
-export function buildTemplateWorkbook(): Blob {
+export async function buildTemplateWorkbook(): Promise<Blob> {
   const headers = ['SKU', 'Nom', 'Catégorie', 'Prix Achat', 'Prix Vente', 'Stock Initial', 'Code Barre', 'Unité', 'TVA', 'Seuil Alerte'];
   const example = ['CLOU-4CM', 'Clous 4cm (boîte)', 'Quincaillerie', 800, 1200, 50, '', 'piece', 0, 10];
-  const ws = XLSX.utils.aoa_to_sheet([headers, example]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Produits');
-  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-  return new Blob([out], { type: 'application/octet-stream' });
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Produits');
+  sheet.addRow(headers);
+  sheet.addRow(example);
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }

@@ -106,8 +106,8 @@ export default function ProductImportPage() {
     }
   };
 
-  const handleDownloadTemplate = () => {
-    const blob = buildTemplateWorkbook();
+  const handleDownloadTemplate = async () => {
+    const blob = await buildTemplateWorkbook();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -272,10 +272,10 @@ export default function ProductImportPage() {
                   >
                     <FileSpreadsheet className="h-10 w-10 mx-auto text-gray-400 mb-2" />
                     <p className="text-sm text-gray-600">
-                      {isParsing ? 'Lecture du fichier…' : 'Clique ou dépose un fichier .xlsx, .xls ou .csv'}
+                      {isParsing ? 'Lecture du fichier…' : 'Clique ou dépose un fichier .xlsx ou .csv'}
                     </p>
                     <input
-                      ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv"
+                      ref={fileInputRef} type="file" accept=".xlsx,.csv"
                       className="hidden"
                       onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
                     />
