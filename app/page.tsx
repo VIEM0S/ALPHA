@@ -168,8 +168,8 @@ export default function HomePage() {
                 key={plan.name}
                 className={`rounded-2xl p-8 transition-all ${
                   plan.popular
-                    ? "bg-primary-600 text-white ring-4 ring-primary-600 ring-offset-4 hover:shadow-xl"
-                    : "bg-white border border-gray-200 hover:border-gray-300 hover:shadow-lg"
+                    ? "bg-primary-600 text-white ring-4 ring-primary-600 ring-offset-4 hover:shadow-xl hover:-translate-y-1"
+                    : "bg-white border border-gray-200 hover:border-gray-300 hover:shadow-lg hover:-translate-y-1"
                 }`}
               >
                 {plan.popular && (

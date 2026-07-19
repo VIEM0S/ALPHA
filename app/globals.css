@@ -12,9 +12,9 @@
     --primary-400: 96 165 250;
     --primary-500: 30 64 175;
     --primary-600: 30 58 138;
-    --primary-700: 29 78 216;
-    --primary-800: 30 64 175;
-    --primary-900: 30 58 138;
+    --primary-700: 24 46 110;
+    --primary-800: 18 35 83;
+    --primary-900: 13 24 58;
     --primary-950: 23 37 84;
 
     /* Secondary - White/Gray */
@@ -110,7 +110,9 @@
 
   body {
     @apply bg-gray-50 text-gray-900 antialiased;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
   }
 }
 
@@ -180,4 +182,13 @@
 
 .animate-slide-in {
   animation: slideIn 0.3s ease-out;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+#features,
+#pricing,
+#contact {
+  scroll-margin-top: 5rem;
 }
