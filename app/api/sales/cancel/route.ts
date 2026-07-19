@@ -61,10 +61,28 @@ export async function POST(request: NextRequest) {
       if (!invSnap.empty) invRefs[item.productId] = invSnap.docs[0].ref;
     }
 
-    const movementsToWrite: Array<{ productId: string; qty: number; previousQuantity: number; newQuantity: number }> = [];
+    let movementsToWrite: Array<{ productId: string; qty: number; previousQuantity: number; newQuantity: number }> = [];
 
     await adminDb.runTransaction(async (tx) => {
+      // Réinitialisé à chaque (re)exécution du callback : Firestore peut
+      // relancer une transaction en cas de contention, et ce tableau est
+      // rempli plus bas — sans ce reset, un retry accumulerait des
+      // mouvements en double.
+      movementsToWrite = [];
+
       // ── Lectures d'abord ────────────────────────────────────────────────
+      // Fix (idempotence double-clic) : le statut de la vente était lu une
+      // seule fois avant la transaction (ligne ~38) et jamais revérifié ici.
+      // Deux requêtes d'annulation concurrentes sur la même vente passaient
+      // toutes les deux le contrôle initial et restauraient chacune le stock
+      // séparément — la même vente se retrouvait annulée "deux fois", avec
+      // un stock restauré en double. On relit le statut ici, à l'intérieur
+      // de la transaction, pour que seule la première annulation aboutisse.
+      const freshSaleSnap = await tx.get(saleRef);
+      if (freshSaleSnap.data()?.status !== 'COMPLETED') {
+        throw new Error('Cette vente a déjà été annulée ou modifiée entre-temps.');
+      }
+
       const freshQtys: Record<string, number> = {};
       for (const [productId, ref] of Object.entries(invRefs)) {
         const fresh = await tx.get(ref);
@@ -111,6 +129,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Cancel sale error:', error);
-    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+    const msg = error instanceof Error ? error.message : 'Erreur interne';
+    const isAlreadyCancelled = msg.startsWith('Cette vente a déjà été annulée');
+    return NextResponse.json(
+      { error: isAlreadyCancelled ? msg : 'Erreur interne' },
+      { status: isAlreadyCancelled ? 409 : 500 }
+    );
   }
 }

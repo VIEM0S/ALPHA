@@ -107,30 +107,17 @@ export async function POST(request: NextRequest) {
     const acompte = paymentMethod === 'CREDIT' ? Math.max(0, Math.min(Number(amountReceived) || 0, total)) : total;
     const soldeCredit = paymentMethod === 'CREDIT' ? Math.max(0, total - acompte) : 0;
 
-    // Fix : le plafond de crédit du client (customer.creditLimit) n'était jamais
-    // vérifié — un client pouvait accumuler une dette illimitée.
-    //
-    // En synchronisation offline (offlineSyncId présent), la vente a DÉJÀ eu
-    // lieu physiquement — le client est reparti avec la marchandise pendant la
-    // coupure réseau. La refuser ici ne l'annule pas, ça la fait juste échouer
-    // silencieusement en boucle dans la file locale. On laisse donc passer et
-    // on signale le dépassement via une alerte pour régularisation manuelle,
-    // au lieu de bloquer une transaction déjà consommée dans le monde réel.
-    let creditConflict = false;
-    if (paymentMethod === 'CREDIT' && soldeCredit > 0 && customer) {
-      const creditLimit = Number(customer.creditLimit) || 0;
-      const creditUsed = Number(customer.creditUsed) || 0;
-      if (creditUsed + soldeCredit > creditLimit) {
-        if (!offlineSyncId) {
-          const disponible = Math.max(0, creditLimit - creditUsed);
-          return NextResponse.json(
-            { error: `Plafond de crédit dépassé pour ce client. Crédit disponible : ${disponible} FCFA.` },
-            { status: 400 }
-          );
-        }
-        creditConflict = true;
-      }
-    }
+    // Fix (course sur customer.creditUsed) : le plafond de crédit ET
+    // l'incrémentation de customer.creditUsed sont désormais vérifiés et
+    // appliqués ENSEMBLE, à l'intérieur de la transaction ci-dessous, sur une
+    // lecture fraîche du client (tx.get(customerRef)) — jamais sur la valeur
+    // `customer` capturée avant la transaction. L'ancienne version lisait
+    // customer.creditUsed une seule fois en dehors de toute transaction puis
+    // écrivait `creditUsed: (customer.creditUsed || 0) + soldeCredit` après
+    // coup : deux ventes à crédit concurrentes pour le même client lisaient
+    // la même valeur de départ, et la seconde écriture écrasait la première
+    // (perte de crédit accordé, plafond potentiellement contournable).
+    const requiresCreditCheck = paymentMethod === 'CREDIT' && soldeCredit > 0 && !!customerRef;
 
     const receivedCash = paymentMethod === 'CASH' ? (Number(amountReceived) || total) : acompte;
     if (paymentMethod === 'CASH' && receivedCash < total) {
@@ -163,8 +150,9 @@ export async function POST(request: NextRequest) {
     const fiscalYear = new Date().getFullYear();
     const counterRef = adminDb.doc(`tenants/${tenantId}/_counters/sales_${fiscalYear}`);
 
-    // ── Transaction atomique : vérifie + décrémente le stock, crée la vente ─
-    const { reference, stockConflictProducts } = await adminDb.runTransaction(async (tx) => {
+    // ── Transaction atomique : vérifie + décrémente le stock, vérifie + met
+    // à jour le crédit client, crée la vente ─────────────────────────────────
+    const { reference, stockConflictProducts, creditConflict } = await adminDb.runTransaction(async (tx) => {
       // ── Toutes les lectures d'abord (obligatoire dans une transaction) ────
       const counterSnap = await tx.get(counterRef);
       const freshQtys: Record<string, number> = {};
@@ -173,6 +161,18 @@ export async function POST(request: NextRequest) {
         if (!inv) continue;
         const fresh = await tx.get(inv.ref);
         freshQtys[l.product.id] = fresh.data()?.quantity || 0;
+      }
+      // Lecture fraîche du client, à l'intérieur de la transaction : c'est la
+      // seule valeur de creditUsed sur laquelle on a le droit de raisonner —
+      // celle capturée plus haut (`customer`) peut déjà être obsolète si une
+      // autre vente à crédit pour ce même client vient de s'intercaler.
+      let freshCreditUsed = 0;
+      let creditLimit = 0;
+      if (requiresCreditCheck && customerRef) {
+        const freshCustomerSnap = await tx.get(customerRef);
+        const freshCustomer = freshCustomerSnap.data() || {};
+        freshCreditUsed = Number(freshCustomer.creditUsed) || 0;
+        creditLimit = Number(freshCustomer.creditLimit) || 0;
       }
       const nextSeq = (counterSnap.exists ? counterSnap.data()!.value : 0) + 1;
       const reference = `FAC-${fiscalYear}-${String(nextSeq).padStart(6, '0')}`;
@@ -184,7 +184,7 @@ export async function POST(request: NextRequest) {
         if (!inv) continue;
         const freshQty = freshQtys[l.product.id];
         if (freshQty < l.quantity) {
-          // Même logique que le plafond de crédit ci-dessus : en sync offline,
+          // Même logique que le plafond de crédit ci-dessous : en sync offline,
           // la vente a déjà eu lieu physiquement — on ne peut pas la refuser
           // après coup. On laisse le stock passer en négatif et on le signale.
           if (!offlineSyncId) {
@@ -193,6 +193,25 @@ export async function POST(request: NextRequest) {
           stockConflictProducts.push(`${l.product.name} (${freshQty} dispo, ${l.quantity} vendu)`);
         }
         tx.update(inv.ref, { quantity: freshQty - l.quantity, updatedAt: FieldValue.serverTimestamp() });
+      }
+      let creditConflict = false;
+      if (requiresCreditCheck && customerRef) {
+        if (freshCreditUsed + soldeCredit > creditLimit) {
+          // En synchronisation offline, la vente a déjà eu lieu physiquement
+          // (le client est reparti avec la marchandise pendant la coupure
+          // réseau) : la refuser ici ne l'annule pas, ça la fait juste échouer
+          // silencieusement en boucle dans la file locale. On laisse donc
+          // passer et on signale le dépassement pour régularisation manuelle.
+          if (!offlineSyncId) {
+            const disponible = Math.max(0, creditLimit - freshCreditUsed);
+            throw new Error(`Plafond de crédit dépassé pour ce client. Crédit disponible : ${disponible} FCFA.`);
+          }
+          creditConflict = true;
+        }
+        tx.update(customerRef, {
+          creditUsed: FieldValue.increment(soldeCredit),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
       }
       tx.set(saleRef, {
         tenantId, storeId, userId: callerUid,
@@ -213,7 +232,7 @@ export async function POST(request: NextRequest) {
       if (dedupRef) {
         tx.set(dedupRef, { saleId: saleRef.id, reference, createdAt: FieldValue.serverTimestamp() });
       }
-      return { reference, stockConflictProducts };
+      return { reference, stockConflictProducts, creditConflict };
     });
 
     // Alerte manager si la synchronisation offline a révélé un dépassement
@@ -314,18 +333,21 @@ export async function POST(request: NextRequest) {
           createdAt: FieldValue.serverTimestamp(),
         });
       }
-      await customerRef.update({
-        creditUsed: (customer?.creditUsed || 0) + soldeCredit,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      // customer.creditUsed est déjà incrémenté de façon atomique
+      // (FieldValue.increment) à l'intérieur de la transaction ci-dessus —
+      // ne pas l'écrire une seconde fois ici avec une valeur non fraîche.
     }
 
     return NextResponse.json({ success: true, saleId: saleRef.id, reference, total, change });
   } catch (error) {
     console.error('POS checkout error:', error);
     const msg = error instanceof Error ? error.message : 'Erreur interne';
-    // Les erreurs de stock insuffisant sont utiles à afficher telles quelles
-    const isStockError = msg.startsWith('Stock insuffisant');
-    return NextResponse.json({ error: isStockError ? msg : 'Erreur lors de la finalisation de la vente' }, { status: isStockError ? 409 : 500 });
+    // Les erreurs de stock insuffisant et de plafond de crédit dépassé sont
+    // utiles à afficher telles quelles (l'utilisateur doit savoir pourquoi).
+    const isKnownBusinessError = msg.startsWith('Stock insuffisant') || msg.startsWith('Plafond de crédit dépassé');
+    return NextResponse.json(
+      { error: isKnownBusinessError ? msg : 'Erreur lors de la finalisation de la vente' },
+      { status: isKnownBusinessError ? 409 : 500 }
+    );
   }
 }

@@ -270,7 +270,13 @@ service cloud.firestore {
       // ─── Audit logs ────────────────────────────────────────────────────────
       match /audit_logs/{logId} {
         allow read: if belongsToTenant(tenantId) && isOwnerOrAdmin();
-        allow create: if belongsToTenant(tenantId);
+        // Fix : "create" était ouvert à tout membre du tenant, qui pouvait
+        // donc écrire une entrée d'audit arbitraire (usurper un userId,
+        // inventer une action) — une trace censée être fiable ne doit pas
+        // être modifiable par le client. Le vrai flux d'écriture passe
+        // exclusivement par lib/firebase/audit-log.ts (Admin SDK), qui
+        // ignore ces règles ; aucun code client n'écrit ici (vérifié).
+        allow create: if false;
         allow update, delete: if false; // Immuables
       }
 

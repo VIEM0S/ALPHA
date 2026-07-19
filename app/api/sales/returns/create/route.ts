@@ -120,11 +120,32 @@ export async function POST(request: NextRequest) {
         freshQtys[l.productId] = fresh.data()?.quantity || 0;
       }
 
+      // Fix (même course que sur customer.creditUsed) : `returnedQuantity`
+      // était lu une seule fois avant la transaction (saleItemsByProduct,
+      // capturé plus haut) et jamais revérifié ici. Deux retours concurrents
+      // sur la même vente pouvaient chacun passer le contrôle "quantité
+      // restituable" sur une valeur déjà obsolète, et rembourser à deux
+      // reprises plus que ce qui a réellement été acheté. On relit chaque
+      // ligne de vente fraîchement et on revalide avant d'écrire.
+      const freshReturnedQty: Record<string, number> = {};
+      for (const l of returnLines) {
+        const original = saleItemsByProduct.get(l.productId)!;
+        const freshItemSnap = await tx.get(original.ref);
+        const already = Number(freshItemSnap.data()?.returnedQuantity) || 0;
+        freshReturnedQty[l.productId] = already;
+        const purchasable = original.quantity - already;
+        if (l.quantity > purchasable) {
+          throw new Error(
+            `Quantité à retourner (${l.quantity}) supérieure à la quantité restituable (${purchasable}) pour "${original.productName}" — un autre retour a probablement été traité entre-temps.`
+          );
+        }
+      }
+
       // ── Écritures ────────────────────────────────────────────────────────
       for (const l of returnLines) {
         const original = saleItemsByProduct.get(l.productId)!;
         tx.update(original.ref, {
-          returnedQuantity: (original.returnedQuantity || 0) + l.quantity,
+          returnedQuantity: FieldValue.increment(l.quantity),
         });
         const inv = invRefs[l.productId];
         if (inv) {
@@ -138,7 +159,8 @@ export async function POST(request: NextRequest) {
       const totalOriginalQty = Array.from(saleItemsByProduct.values()).reduce((s, i) => s + i.quantity, 0);
       const totalReturnedQty = Array.from(saleItemsByProduct.values()).reduce((s, i) => {
         const extra = returnLines.find(l => l.productId === i.productId)?.quantity || 0;
-        return s + (i.returnedQuantity || 0) + extra;
+        const already = freshReturnedQty[i.productId] ?? (i.returnedQuantity || 0);
+        return s + already + extra;
       }, 0);
       const newSaleStatus = totalReturnedQty >= totalOriginalQty ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
 
@@ -187,6 +209,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, id: returnRef.id, refundAmount });
   } catch (error) {
     console.error('Create return error:', error);
-    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+    const msg = error instanceof Error ? error.message : 'Erreur interne';
+    const isConflict = msg.startsWith('Quantité à retourner');
+    return NextResponse.json({ error: isConflict ? msg : 'Erreur interne' }, { status: isConflict ? 409 : 500 });
   }
 }

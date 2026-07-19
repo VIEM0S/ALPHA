@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/firebase/admin';
+import { checkRateLimit, getClientIp } from '@/lib/api/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
+    // 15 tentatives / 5 minutes / IP : suffisant pour un usage légitime
+    // (y compris un oubli de mot de passe suivi de plusieurs essais), assez
+    // bas pour freiner un bruteforce basique. Ajustable si trop strict.
+    const rateLimit = await checkRateLimit(`login:${getClientIp(request)}`, 15, 5 * 60);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Trop de tentatives. Réessayez dans quelques minutes.' },
+        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } }
+      );
+    }
+
     const { idToken } = await request.json();
 
     if (!idToken) {

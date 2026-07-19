@@ -87,13 +87,40 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const updatedItems: POLine[] = [];
-    const movementsToWrite: Array<{ productId: string; productName: string; qty: number; previousQuantity: number; newQuantity: number; unitCost: number }> = [];
+    let updatedItems: POLine[] = [];
+    let movementsToWrite: Array<{ productId: string; productName: string; qty: number; previousQuantity: number; newQuantity: number; unitCost: number }> = [];
 
     await adminDb.runTransaction(async (tx) => {
+      // Réinitialisés à chaque (re)exécution du callback (retry Firestore).
+      updatedItems = [];
+      movementsToWrite = [];
+
+      // Fix (idempotence double-soumission) : `poItems` (avec
+      // `quantityReceived` cumulatif) était lu une seule fois avant la
+      // transaction et jamais revérifié ici — seul l'inventaire l'était.
+      // Deux réceptions concurrentes sur le même bon de commande pouvaient
+      // chacune passer la validation "quantité ≤ reste attendu" sur une
+      // valeur déjà obsolète, et la seconde écrasait le cumul de la première.
+      // On relit le PO ici et on revalide avant d'écrire.
+      const freshPoSnap = await tx.get(poRef);
+      const freshPo = freshPoSnap.data()!;
+      if (!['DRAFT', 'SENT', 'PARTIALLY_RECEIVED'].includes(freshPo.status)) {
+        throw new Error(`Impossible de réceptionner un bon ${freshPo.status} — probablement déjà réceptionné entre-temps.`);
+      }
+      const freshPoItems: POLine[] = freshPo.items;
+      for (const item of freshPoItems) {
+        const qty = receiveMap.get(item.productId) || 0;
+        const remaining = item.quantityOrdered - item.quantityReceived;
+        if (qty > remaining) {
+          throw new Error(
+            `Quantité reçue (${qty}) supérieure au reste attendu (${remaining}) pour "${item.productName}" — probablement déjà réceptionné entre-temps.`
+          );
+        }
+      }
+
       // ── Lectures d'abord ────────────────────────────────────────────────
       const freshQtys: Record<string, number> = {};
-      for (const item of poItems) {
+      for (const item of freshPoItems) {
         const inv = invRefs[item.productId];
         if (!inv) continue;
         if (inv.exists) {
@@ -105,7 +132,7 @@ export async function POST(request: NextRequest) {
       }
 
       // ── Écritures ────────────────────────────────────────────────────────
-      for (const item of poItems) {
+      for (const item of freshPoItems) {
         const qtyNow = receiveMap.get(item.productId) || 0;
         const newQuantityReceived = item.quantityReceived + qtyNow;
         updatedItems.push({ ...item, quantityReceived: newQuantityReceived });
@@ -139,13 +166,13 @@ export async function POST(request: NextRequest) {
 
       const allReceived = updatedItems.every(i => i.quantityReceived >= i.quantityOrdered);
       const anyReceived = updatedItems.some(i => i.quantityReceived > 0);
-      const newStatus = allReceived ? 'RECEIVED' : anyReceived ? 'PARTIALLY_RECEIVED' : po.status;
+      const newStatus = allReceived ? 'RECEIVED' : anyReceived ? 'PARTIALLY_RECEIVED' : freshPo.status;
 
       tx.update(poRef, {
         items: updatedItems,
         status: newStatus,
         updatedAt: FieldValue.serverTimestamp(),
-        receivedAt: allReceived ? FieldValue.serverTimestamp() : po.receivedAt || null,
+        receivedAt: allReceived ? FieldValue.serverTimestamp() : freshPo.receivedAt || null,
       });
     });
 
@@ -167,6 +194,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Receive purchase order error:', error);
-    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+    const msg = error instanceof Error ? error.message : 'Erreur interne';
+    const isConflict = msg.includes('déjà réceptionné entre-temps');
+    return NextResponse.json({ error: isConflict ? msg : 'Erreur interne' }, { status: isConflict ? 409 : 500 });
   }
 }
