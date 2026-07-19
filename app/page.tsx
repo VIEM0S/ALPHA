@@ -1,19 +1,27 @@
-'use client';
+"use client";
 
-import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
-import { Store, ArrowRight, Package, ShoppingCart, BarChart3, Shield, Zap } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { LandingLayout } from '@/components/landing/landing-layout';
-import { PLAN_DISPLAY_LIST } from '@/lib/utils/plan-display';
+import { LandingLayout } from "@/components/landing/landing-layout";
+import { Button } from "@/components/ui/button";
+import { PLAN_DISPLAY_LIST } from "@/lib/utils/plan-display";
+import {
+  ArrowRight,
+  BarChart3,
+  Package,
+  Shield,
+  ShoppingCart,
+  Store,
+  Zap,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 export default function HomePage() {
   const router = useRouter();
 
   useEffect(() => {
-    const user = localStorage.getItem('erp-user');
+    const user = localStorage.getItem("erp-user");
     if (user) {
-      router.push('/dashboard');
+      router.push("/dashboard");
     }
   }, [router]);
 
@@ -38,7 +46,7 @@ export default function HomePage() {
               <Button
                 size="lg"
                 className="bg-white text-primary-900 hover:bg-gray-100 h-14 px-8 text-lg"
-                onClick={() => router.push('/setup')}
+                onClick={() => router.push("/setup")}
               >
                 Commencer gratuitement
                 <ArrowRight className="ml-2 h-5 w-5" />
@@ -46,8 +54,8 @@ export default function HomePage() {
               <Button
                 size="lg"
                 variant="outline"
-                className="border-white/30 text-white hover:bg-white/10 h-14 px-8 text-lg"
-                onClick={() => router.push('/login')}
+                className="bg-transparent border-white/30 text-white hover:bg-white/10 h-14 px-8 text-lg"
+                onClick={() => router.push("/login")}
               >
                 Se connecter
               </Button>
@@ -57,13 +65,15 @@ export default function HomePage() {
           {/* Stats */}
           <div className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-8">
             {[
-              { value: '500+', label: 'Entreprises' },
-              { value: '50M+', label: 'Transactions' },
-              { value: '99.9%', label: 'Disponibilité' },
-              { value: '24/7', label: 'Support' },
+              { value: "500+", label: "Entreprises" },
+              { value: "50M+", label: "Transactions" },
+              { value: "99.9%", label: "Disponibilité" },
+              { value: "24/7", label: "Support" },
             ].map((stat) => (
               <div key={stat.label} className="text-center">
-                <p className="text-3xl md:text-4xl font-bold text-white">{stat.value}</p>
+                <p className="text-3xl md:text-4xl font-bold text-white">
+                  {stat.value}
+                </p>
                 <p className="text-primary-300">{stat.label}</p>
               </div>
             ))}
@@ -87,33 +97,39 @@ export default function HomePage() {
             {[
               {
                 icon: Package,
-                title: 'Gestion des stocks',
-                description: 'Suivez vos produits en temps réel, alertes automatiques de stock bas, mouvements traqués.',
+                title: "Gestion des stocks",
+                description:
+                  "Suivez vos produits en temps réel, alertes automatiques de stock bas, mouvements traqués.",
               },
               {
                 icon: ShoppingCart,
-                title: 'Point de vente rapide',
-                description: 'Interface POS ultra-rapide, scan code-barres, paiement mobile money, factures automatiques.',
+                title: "Point de vente rapide",
+                description:
+                  "Interface POS ultra-rapide, scan code-barres, paiement mobile money, factures automatiques.",
               },
               {
                 icon: BarChart3,
-                title: 'Analytics avancés',
-                description: 'Tableaux de bord interactifs, rapports de ventes, analysis de rentabilité par produit.',
+                title: "Analytics avancés",
+                description:
+                  "Tableaux de bord interactifs, rapports de ventes, analysis de rentabilité par produit.",
               },
               {
                 icon: Shield,
-                title: 'Multi-utilisateurs',
-                description: 'Gérez les accès par rôle: caissier, manager, propriétaire. Historique complet des actions.',
+                title: "Multi-utilisateurs",
+                description:
+                  "Gérez les accès par rôle: caissier, manager, propriétaire. Historique complet des actions.",
               },
               {
                 icon: Zap,
-                title: 'Gestion des crédits',
-                description: 'Suivez les créances clients, rappels automatiques, historique des paiements.',
+                title: "Gestion des crédits",
+                description:
+                  "Suivez les créances clients, rappels automatiques, historique des paiements.",
               },
               {
                 icon: Store,
-                title: 'Multi-magasins',
-                description: 'Gérez plusieurs points de vente, transferts inter-magasins, rapport consolidé.',
+                title: "Multi-magasins",
+                description:
+                  "Gérez plusieurs points de vente, transferts inter-magasins, rapport consolidé.",
               },
             ].map((feature) => (
               <div
@@ -151,8 +167,8 @@ export default function HomePage() {
                 key={plan.name}
                 className={`rounded-2xl p-8 ${
                   plan.popular
-                    ? 'bg-primary-600 text-white ring-4 ring-primary-600 ring-offset-4'
-                    : 'bg-white border border-gray-200'
+                    ? "bg-primary-600 text-white ring-4 ring-primary-600 ring-offset-4"
+                    : "bg-white border border-gray-200"
                 }`}
               >
                 {plan.popular && (
@@ -162,22 +178,38 @@ export default function HomePage() {
                 )}
                 <h3 className="text-2xl font-bold mb-2">{plan.name}</h3>
                 <div className="mb-4">
-                  <span className="text-4xl font-bold">{plan.price.toLocaleString('fr-FR')}</span>
-                  <span className={plan.popular ? 'text-primary-200' : 'text-gray-500'}> FCFA/mois</span>
+                  <span className="text-4xl font-bold">
+                    {plan.price.toLocaleString("fr-FR")}
+                  </span>
+                  <span
+                    className={
+                      plan.popular ? "text-primary-200" : "text-gray-500"
+                    }
+                  >
+                    {" "}
+                    FCFA/mois
+                  </span>
                 </div>
-                <p className={`mb-6 ${plan.popular ? 'text-primary-200' : 'text-gray-500'}`}>
+                <p
+                  className={`mb-6 ${plan.popular ? "text-primary-200" : "text-gray-500"}`}
+                >
                   {plan.description}
                 </p>
                 <ul className="space-y-3 mb-8">
                   {plan.features.map((feature) => (
                     <li key={feature} className="flex items-center gap-2">
                       <svg
-                        className={`h-5 w-5 ${plan.popular ? 'text-primary-200' : 'text-success-500'}`}
+                        className={`h-5 w-5 ${plan.popular ? "text-primary-200" : "text-success-500"}`}
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
                       >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M5 13l4 4L19 7"
+                        />
                       </svg>
                       <span>{feature}</span>
                     </li>
@@ -186,10 +218,10 @@ export default function HomePage() {
                 <Button
                   className={`w-full ${
                     plan.popular
-                      ? 'bg-white text-primary-600 hover:bg-gray-100'
-                      : 'bg-primary-600 text-white hover:bg-primary-700'
+                      ? "bg-white text-primary-600 hover:bg-gray-100"
+                      : "bg-primary-600 text-white hover:bg-primary-700"
                   }`}
-                  onClick={() => router.push('/setup')}
+                  onClick={() => router.push("/setup")}
                 >
                   {plan.cta}
                 </Button>
@@ -206,12 +238,13 @@ export default function HomePage() {
             Prêt à transformer votre entreprise ?
           </h2>
           <p className="text-xl text-primary-200 mb-8">
-            Rejoignez des centaines d'entreprises qui font confiance à ProAlpha ERP
+            Rejoignez des centaines d'entreprises qui font confiance à ProAlpha
+            ERP
           </p>
           <Button
             size="lg"
             className="bg-white text-primary-900 hover:bg-gray-100 h-14 px-8 text-lg"
-            onClick={() => router.push('/setup')}
+            onClick={() => router.push("/setup")}
           >
             Démarrer maintenant
             <ArrowRight className="ml-2 h-5 w-5" />
