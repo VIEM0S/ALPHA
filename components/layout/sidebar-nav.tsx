@@ -201,7 +201,7 @@ export function Sidebar() {
         </div>
         {!collapsed && (
           <div>
-            <p className="text-base font-bold text-gray-900 leading-tight">ProAlpha</p>
+            <p className="text-base font-bold text-gray-900 leading-tight">Yerkoy</p>
             <p className="text-xs text-gray-400 leading-tight">ERP</p>
           </div>
         )}

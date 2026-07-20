@@ -99,7 +99,7 @@ export default function SetupPage() {
             <Store className="h-8 w-8 text-white" />
           </Link>
           <Link href="/">
-            <h1 className="text-3xl font-bold text-white hover:text-primary-200 transition-colors">ProAlpha ERP</h1>
+            <h1 className="text-3xl font-bold text-white hover:text-primary-200 transition-colors">Yerkoy ERP</h1>
           </Link>
           <p className="text-primary-200 mt-2">Configuration de votre espace de gestion</p>
         </div>

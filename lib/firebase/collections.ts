@@ -1,5 +1,5 @@
 /**
- * STRUCTURE FIRESTORE — ProAlpha ERP
+ * STRUCTURE FIRESTORE — Yerkoy ERP
  * ------------------------------------
  * Firestore = données métier persistantes (multi-tenant)
  *

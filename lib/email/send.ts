@@ -30,7 +30,7 @@ export async function sendEmail(params: {
     },
     body: JSON.stringify({
       personalizations: [{ to: [{ email: params.to }] }],
-      from: { email: fromEmail, name: 'ProAlpha ERP' },
+      from: { email: fromEmail, name: 'Yerkoy ERP' },
       subject: params.subject,
       content: [
         { type: 'text/plain', value: params.text || params.html.replace(/<[^>]+>/g, '') },

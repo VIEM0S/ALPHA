@@ -16,7 +16,7 @@ Sur chaque page :
   visible et sans ambiguïté, et qui fonctionne même si le formulaire est en
   train de charger (ce n'est pas un bouton désactivé pendant
   `isLoading`, contrairement au bouton "Se connecter").
-- Le logo + titre "ProAlpha ERP" redeviennent aussi cliquables vers `/`.
+- Le logo + titre "Yerkoy ERP" redeviennent aussi cliquables vers `/`.
 
 Sur **`setup`** spécifiquement (formulaire en plusieurs étapes) : cliquer
 "Retour à l'accueil" déclenche une confirmation ("Quitter la configuration ?

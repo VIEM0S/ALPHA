@@ -37,7 +37,7 @@ export default function HomePage() {
               <Store className="h-10 w-10 text-white" />
             </div>
             <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold text-white mb-6">
-              ProAlpha ERP
+              Yerkoy ERP
             </h1>
             <p className="text-xl md:text-2xl text-primary-200 mb-8 max-w-3xl mx-auto">
               La solution de gestion moderne pour les commerces africains.
@@ -247,7 +247,7 @@ export default function HomePage() {
             Prêt à transformer votre entreprise ?
           </h2>
           <p className="text-xl text-primary-200 mb-8">
-            Rejoignez des centaines d'entreprises qui font confiance à ProAlpha
+            Rejoignez des centaines d'entreprises qui font confiance à Yerkoy
             ERP
           </p>
           <Button
@@ -270,10 +270,10 @@ export default function HomePage() {
           <div className="flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center gap-2 mb-4 md:mb-0">
               <Store className="h-6 w-6 text-white" />
-              <span className="text-xl font-bold text-white">ProAlpha ERP</span>
+              <span className="text-xl font-bold text-white">Yerkoy ERP</span>
             </div>
             <p className="text-gray-400">
-              © 2024 ProAlpha ERP. Tous droits réservés.
+              © 2024 Yerkoy ERP. Tous droits réservés.
             </p>
           </div>
         </div>

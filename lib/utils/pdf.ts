@@ -1,5 +1,5 @@
 /**
- * Générateur de factures PDF — ProAlpha ERP
+ * Générateur de factures PDF — Yerkoy ERP
  * Utilise jsPDF + jspdf-autotable
  */
 

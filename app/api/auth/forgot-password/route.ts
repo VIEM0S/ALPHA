@@ -36,10 +36,10 @@ export async function POST(request: NextRequest) {
       // jamais le lien lui-même.
       const result = await sendEmail({
         to: email,
-        subject: 'Réinitialisation de votre mot de passe — ProAlpha ERP',
+        subject: 'Réinitialisation de votre mot de passe — Yerkoy ERP',
         html: `
           <p>Bonjour,</p>
-          <p>Vous avez demandé la réinitialisation de votre mot de passe ProAlpha ERP.</p>
+          <p>Vous avez demandé la réinitialisation de votre mot de passe Yerkoy ERP.</p>
           <p><a href="${link}">Cliquez ici pour choisir un nouveau mot de passe</a></p>
           <p>Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>
         `,
