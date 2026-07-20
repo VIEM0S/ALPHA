@@ -63,10 +63,16 @@ export default function LoginPage() {
         body: JSON.stringify({ idToken }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(data.error || 'Échec de la connexion');
+        throw new Error(
+          data?.error || `Erreur serveur (${response.status}). Réessayez dans un instant.`
+        );
+      }
+
+      if (!data) {
+        throw new Error('Réponse du serveur invalide. Réessayez dans un instant.');
       }
 
       // 4. Hydrater le store Zustand (données de profil uniquement)
@@ -107,7 +113,7 @@ export default function LoginPage() {
             <Store className="h-8 w-8 text-white" />
           </Link>
           <Link href="/">
-            <h1 className="text-3xl font-bold text-white hover:text-primary-200 transition-colors">Yerkoy ERP</h1>
+            <h1 className="text-3xl font-bold text-white hover:text-primary-200 transition-colors">ProAlpha ERP</h1>
           </Link>
           <p className="text-primary-200 mt-2">Système de gestion Enterprise</p>
         </div>
@@ -200,7 +206,7 @@ export default function LoginPage() {
         </Card>
 
         <p className="text-center text-sm text-primary-200 mt-8">
-          © 2024 Yerkoy ERP. Tous droits réservés.
+          © 2024 ProAlpha ERP. Tous droits réservés.
         </p>
       </div>
     </div>
