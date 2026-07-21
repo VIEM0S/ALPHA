@@ -1,5 +1,5 @@
 /**
- * STRUCTURE REALTIME DATABASE — Yerkoy ERP
+ * STRUCTURE REALTIME DATABASE — Kafora
  * -------------------------------------------
  * RTDB = données qui changent fréquemment et nécessitent du temps réel
  *

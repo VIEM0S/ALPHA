@@ -78,7 +78,7 @@ export function useCheckout({ tenantId, storeId, refreshQueue, setIsOnline }: Us
       if (!res.ok) throw new Error(data.error || 'Erreur lors de la finalisation');
 
       const receipt: InvoiceData = {
-        companyName: tenant?.name || 'Yerkoy',
+        companyName: tenant?.name || 'KAFORA',
         companyPhone: tenant?.phone || undefined,
         companyAddress: tenant?.address || undefined,
         companyCity: tenant?.city || undefined,
@@ -120,7 +120,7 @@ export function useCheckout({ tenantId, storeId, refreshQueue, setIsOnline }: Us
         refreshQueue();
         setIsOnline(false);
         setLastReceiptData({
-          companyName: tenant?.name || 'Yerkoy',
+          companyName: tenant?.name || 'KAFORA',
           companyPhone: tenant?.phone || undefined,
           companyAddress: tenant?.address || undefined,
           companyCity: tenant?.city || undefined,

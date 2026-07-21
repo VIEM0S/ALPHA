@@ -1,4 +1,4 @@
-# Yerkoy ERP
+# Kafora
 
 SaaS multi-tenant de gestion commerciale (POS, stock, ventes, crédit client, multi-magasins) pour les commerces d'Afrique de l'Ouest — bâti sur Next.js 13 (App Router) + Firebase.
 

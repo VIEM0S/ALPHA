@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     const result = await sendEmail({
       to: toEmail,
-      subject: `[Yerkoy ERP] Nouveau message de contact — ${name.trim()}`,
+      subject: `[Kafora] Nouveau message de contact — ${name.trim()}`,
       html: `
         <p><strong>Nom :</strong> ${escapeHtml(name.trim())}</p>
         <p><strong>Email :</strong> ${escapeHtml(email.trim())}</p>

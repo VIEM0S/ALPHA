@@ -1,5 +1,5 @@
 /**
- * Générateur de factures PDF — Yerkoy ERP
+ * Générateur de factures PDF — Kafora
  * Utilise jsPDF + jspdf-autotable
  */
 

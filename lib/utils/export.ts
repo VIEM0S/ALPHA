@@ -1,5 +1,5 @@
 /**
- * Export CSV générique — Yerkoy ERP
+ * Export CSV générique — Kafora
  * -------------------------------------
  * Pas de dépendance externe : génère le CSV en JS pur (Excel/LibreOffice le
  * lisent nativement) et déclenche le téléchargement côté navigateur.

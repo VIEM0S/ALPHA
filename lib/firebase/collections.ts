@@ -1,5 +1,5 @@
 /**
- * STRUCTURE FIRESTORE — Yerkoy ERP
+ * STRUCTURE FIRESTORE — Kafora
  * ------------------------------------
  * Firestore = données métier persistantes (multi-tenant)
  *
